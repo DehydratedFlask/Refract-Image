@@ -1,0 +1,40 @@
+# Application data: downloaded model weights, caches, jobs, references and outputs.
+.refract/
+
+# Local Python runtime and tool caches.
+.runtime/
+.cache/
+.venv/
+.freebuff/
+
+# Generated app and frontend builds.
+app/node_modules/
+app/dist/
+native/build/
+Refract Image.app/
+Refract Native.app/
+release/
+*.dmg
+
+# Local QA and preview artifacts; never publish generated image outputs.
+assets/qa/
+assets/ui-preview.html
+
+# Machine and test caches.
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local environment files. Keep committed examples when present.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Graft is a machine-local graph cache; teammates can rebuild it with `graft build`.
+/graft/
+
+# Local agent skills and Graft helper files can contain private instructions.
+/skills/
+/.ignore

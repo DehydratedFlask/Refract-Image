@@ -1,0 +1,173 @@
+/*
+ * Design tokens, distilled from skills/macos-design-skill.
+ *
+ * Two rules from that skill drive everything here:
+ *   1. Light and dark are designed independently, not inverted. Dark needs MORE
+ *      separation between background levels (three greys), light needs less.
+ *   2. Depth comes from layered shadows that always start with a 0 0 0 0.5px edge,
+ *      never from a visible border.
+ */
+
+:root {
+  /* Surfaces — light: backgrounds sit close together */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f5f5f7;
+  --bg-tertiary: #e8e8ed;
+  --bg-elevated: #ffffff;
+  --bg-inset: #f0f0f3;
+
+  --text-primary: #1d1d1f;
+  --text-secondary: #6e6e73;
+  --text-tertiary: #aeaeb2;
+
+  --border: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.15);
+
+  --accent: #007aff;
+  --accent-hover: #0066d6;
+  --accent-soft: rgba(0, 122, 255, 0.12);
+  --accent-rgb: 0, 122, 255;
+
+  --success: #34c759;
+  --warning: #ff9500;
+  --danger: #ff3b30;
+  --danger-soft: rgba(255, 59, 48, 0.12);
+  /* Apple's favourite yellow, brightened for dark in the second palette below. */
+  --favorite: #ffcc00;
+
+  --surface-hover: rgba(0, 0, 0, 0.04);
+  --surface-active: rgba(0, 0, 0, 0.08);
+  --sidebar-bg: rgba(246, 246, 246, 0.72);
+  --chrome-bg: rgba(250, 250, 250, 0.72);
+  --floating-bg: rgba(255, 255, 255, 0.78);
+
+  --shadow-sm: 0 0 0 0.5px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 0 0 0.5px rgba(0, 0, 0, 0.06), 0 4px 16px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 0 0 0.5px rgba(0, 0, 0, 0.1), 0 2px 8px rgba(0, 0, 0, 0.08),
+    0 8px 30px rgba(0, 0, 0, 0.14);
+  --shadow-window: 0 0 0 0.5px rgba(0, 0, 0, 0.1), 0 12px 40px rgba(0, 0, 0, 0.15),
+    0 40px 80px rgba(0, 0, 0, 0.1);
+
+  /* Spacing: 8px grid */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  --radius-window: 10px;
+  --radius-panel: 12px;
+  --radius-card: 8px;
+  --radius-button: 6px;
+  --radius-input: 6px;
+  --radius-tag: 4px;
+  --radius-thumb: 8px;
+  --radius-pill: 999px;
+
+  /* Type scale (macOS apps run smaller than the web) */
+  --font-system: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+    "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: "SF Mono", Menlo, Monaco, "Courier New", monospace;
+  --text-large-title: 26px;
+  --text-title-1: 22px;
+  --text-title-2: 17px;
+  --text-title-3: 15px;
+  --text-body: 13px;
+  --text-callout: 12px;
+  --text-caption: 11px;
+  --text-mini: 10px;
+
+  --leading-tight: 1.25;
+  --leading-body: 1.4;
+
+  --topbar-height: 50px;
+  --sidebar-width: 240px;
+  --control-height: 28px;
+  --control-height-lg: 34px;
+  --row-height: 30px;
+
+  --ease-out: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --duration-slow: 400ms;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Surfaces — dark: more separation, never pure black */
+    --bg-primary: #1c1c1e;
+    --bg-secondary: #2c2c2e;
+    --bg-tertiary: #3a3a3c;
+    --bg-elevated: #2c2c2e;
+    --bg-inset: #232325;
+
+    --text-primary: #f5f5f7;
+    --text-secondary: #98989d;
+    --text-tertiary: #636366;
+
+    --border: rgba(255, 255, 255, 0.08);
+    --border-strong: rgba(255, 255, 255, 0.15);
+
+    --accent: #0a84ff;
+    --accent-hover: #409cff;
+    --accent-soft: rgba(10, 132, 255, 0.18);
+    --accent-rgb: 10, 132, 255;
+
+    --success: #30d158;
+    --warning: #ff9f0a;
+    --danger: #ff453a;
+    --danger-soft: rgba(255, 69, 58, 0.18);
+    --favorite: #ffd60a;
+
+    --surface-hover: rgba(255, 255, 255, 0.06);
+    --surface-active: rgba(255, 255, 255, 0.1);
+    --sidebar-bg: rgba(30, 30, 32, 0.72);
+    --chrome-bg: rgba(32, 32, 34, 0.72);
+    --floating-bg: rgba(50, 50, 52, 0.78);
+
+    /* Dark shadows read weaker, so they are denser */
+    --shadow-sm: 0 0 0 0.5px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 0 0 0.5px rgba(0, 0, 0, 0.45), 0 4px 16px rgba(0, 0, 0, 0.45);
+    --shadow-lg: 0 0 0 0.5px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.4),
+      0 8px 30px rgba(0, 0, 0, 0.5);
+    --shadow-window: 0 0 0 0.5px rgba(0, 0, 0, 0.5), 0 12px 40px rgba(0, 0, 0, 0.55),
+      0 40px 80px rgba(0, 0, 0, 0.4);
+  }
+}
+
+/* Manual override for the in-app appearance switch (and for QA screenshots). */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-primary: #1c1c1e;
+  --bg-secondary: #2c2c2e;
+  --bg-tertiary: #3a3a3c;
+  --bg-elevated: #2c2c2e;
+  --bg-inset: #232325;
+  --text-primary: #f5f5f7;
+  --text-secondary: #98989d;
+  --text-tertiary: #636366;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.15);
+  --accent: #0a84ff;
+  --accent-hover: #409cff;
+  --accent-soft: rgba(10, 132, 255, 0.18);
+  --accent-rgb: 10, 132, 255;
+  --favorite: #ffd60a;
+  --surface-hover: rgba(255, 255, 255, 0.06);
+  --surface-active: rgba(255, 255, 255, 0.1);
+  --sidebar-bg: rgba(30, 30, 32, 0.72);
+  --chrome-bg: rgba(32, 32, 34, 0.72);
+  --floating-bg: rgba(50, 50, 52, 0.78);
+  --shadow-sm: 0 0 0 0.5px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 0 0 0.5px rgba(0, 0, 0, 0.45), 0 4px 16px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 0 0 0.5px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.4),
+    0 8px 30px rgba(0, 0, 0, 0.5);
+}
