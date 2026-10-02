@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${1:-0.0.1}"
+VERSION="${1:-0.0.2}"
 APP="$ROOT/Refract Image.app"
 RELEASE_DIR="$ROOT/release"
 ASSET="Refract-Image-$VERSION-macos-arm64.dmg"

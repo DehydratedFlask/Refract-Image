@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.2 — 2026-10-02
+
+- Add avatar reference support and project generation sessions.
+
 ## 0.0.1 — 2026-10-01
 
 First public release of Refract Image.

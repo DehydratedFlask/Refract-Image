@@ -71,7 +71,7 @@ const DEMO_OUTPUT = "demo:result-1";
 
 export const demoHealth: HealthInfo = {
   ok: true,
-  version: "0.0.1-demo",
+  version: "0.0.2-demo",
   mock: true,
   runner_ready: false,
   runner_note: "Demo mode: no MLX model is loaded. Install the runtime and start the app to generate for real.",

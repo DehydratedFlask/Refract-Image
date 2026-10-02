@@ -43,7 +43,7 @@ Refract Image is for editing with a visual reference without sending the generat
 
 The setup wizard uses [`uv`](https://docs.astral.sh/uv/) to prepare the Python runtime. Install it first if needed; with Homebrew, run `brew install uv`. Fresh setup resolves the latest compatible Python packages and downloads the selected model from its upstream default revision. The model is fetched separately after the runtime is ready. The initial runtime and model downloads need an internet connection.
 
-> The 0.0.1 app is ad-hoc signed and is not notarized. If macOS blocks the first launch, Control-click **Refract Image.app**, choose **Open**, then confirm in the dialog.
+> The app is ad-hoc signed and is not notarized. If macOS blocks the first launch, Control-click **Refract Image.app**, choose **Open**, then confirm in the dialog.
 
 ## Compatibility
 
@@ -79,7 +79,7 @@ Builds require macOS, Apple silicon, Xcode Command Line Tools, Node.js, and `uv`
 brew install uv node
 ./scripts/bootstrap.sh
 ./scripts/make-swift-app.sh
-./scripts/make-dmg.sh 0.0.1
+./scripts/make-dmg.sh 0.0.2
 ```
 
 The app bundle embeds the built interface and the first-run setup payload. Python runtime dependencies and model weights are installed separately when the app is first opened. Source setup resolves the latest releases allowed by the dependency ranges; new major versions require an intentional range change and compatibility review. The checked-in npm lockfile remains unchanged and supports reproducible builds with `npm ci`.

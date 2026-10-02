@@ -213,7 +213,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         let install = Install.load()
         return [
             "runtime": HostPaths.python() ?? HostPaths.runtimeHint(),
-            "version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.1",
+            "version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.2",
             "mock": service.backend.map { $0.mock ? "true" : "false" } ?? "unknown",
             "data_root": HostPaths.dataRoot().path,
             "logs": service.logsDirectory.path,
