@@ -1,3 +1,4 @@
+import { PromptText } from "../../components/PromptText";
 import { useStore } from "../../store/useStore";
 import { Button, Disclosure, EmptyState, Kbd, ProgressBar, useFileUrl } from "../../components/ui";
 import { baseName } from "../../lib/format";
@@ -7,6 +8,7 @@ import { CompareView } from "../compare/CompareView";
 import { AdvancedPanel } from "./AdvancedPanel";
 import { GenerateBar } from "./GenerateBar";
 import { ReferenceStrip } from "./ReferenceStrip";
+import { AvatarPrompt } from "./AvatarPrompt";
 
 export function ComposeView({ dragActive }: { dragActive: boolean }) {
   const params = useStore((state) => state.params);
@@ -20,7 +22,11 @@ export function ComposeView({ dragActive }: { dragActive: boolean }) {
   const editResult = useStore((state) => state.editResult);
   const refineUrl = useFileUrl(refineSource?.path ?? null);
 
-  const job = currentJob;
+  const jobs = useStore((state) => state.jobs);
+  const job = params.project_id
+    ? [...jobs].reverse().find((entry) => entry.kind === "generate" && entry.payload.project_id === params.project_id &&
+        (entry.payload.project_session_id ?? "s1") === (params.project_session_id ?? "s1")) ?? null
+    : currentJob;
   const previewUrl = useFileUrl(job?.preview_path ?? null);
   const running = Boolean(job && ["queued", "running"].includes(job.status));
   const finishedOutputs = job && job.status === "done" ? job.outputs : [];
@@ -39,7 +45,7 @@ export function ComposeView({ dragActive }: { dragActive: boolean }) {
                 <span style={{ fontWeight: 600 }}>
                   Refining <span className="mono">{baseName(refineSource.path)}</span>
                 </span>
-                <span className="caption faint truncate">
+                <span className="caption faint selectable">
                   {refineSource.originalPrompt
                     ? `was: ${refineSource.originalPrompt}`
                     : "describe the change you want in this image"}
@@ -52,28 +58,13 @@ export function ComposeView({ dragActive }: { dragActive: boolean }) {
             </div>
           ) : null}
 
-          <div className="col" style={{ gap: 6 }}>
-            <span className="field-label">
-              Prompt
-              <span className="faint" style={{ textTransform: "none", letterSpacing: 0 }}>
-                describe the change or the image
-              </span>
-            </span>
-            <textarea
-              className="textarea"
-              rows={5}
-              placeholder={
+          <AvatarPrompt placeholder={
                 refineSource
                   ? "e.g. Make the light warmer and the background softer, keep the pose"
                   : params.reference_paths.length
                   ? "e.g. Change the jacket to dark green. Preserve the person's face and pose."
                   : "e.g. A detailed illustrated botanical poster with the title SPRING"
-              }
-              value={params.prompt}
-              spellCheck={false}
-              onChange={(event) => setParams({ prompt: event.target.value })}
-            />
-          </div>
+              } />
 
           <Disclosure
             title="Advanced"
@@ -120,6 +111,8 @@ export function ComposeView({ dragActive }: { dragActive: boolean }) {
             <div className="caption muted truncate">{job.message}</div>
           </div>
         ) : job && finishedOutputs.length ? (
+          <>
+          <div style={{ padding: "12px 16px 0" }}><PromptText prompt={String(job.payload.prompt ?? "")} /></div>
           <CompareView
             references={job.references}
             outputs={finishedOutputs}
@@ -163,6 +156,7 @@ export function ComposeView({ dragActive }: { dragActive: boolean }) {
                       references: job.references,
                       prompt: String(job.payload.prompt ?? ""),
                       params: job.payload,
+                      project_id: typeof job.payload.project_id === "string" ? job.payload.project_id : null,
                     })
                   }
                 >
@@ -181,6 +175,7 @@ export function ComposeView({ dragActive }: { dragActive: boolean }) {
               </>
             }
           />
+          </>
         ) : (
           <EmptyState
             glyph="✦"

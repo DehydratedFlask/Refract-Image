@@ -22,9 +22,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import ingest, model_store
+from . import ingest, model_store, sysinfo
 from .library import Library
-from .paths import jobs_dir
+from .paths import app_data_dir, jobs_dir
 from .schemas import GenerateRequest, InstallRequest, ValidateRequest
 
 JOB_KINDS = ("generate", "download", "prepare", "prepare-klein", "install", "validate")
@@ -200,12 +200,16 @@ class JobQueue:
                 source = Path(raw).expanduser()
                 if not source.is_file():
                     raise FileNotFoundError(f"reference image not found: {source}")
-                target = job.job_dir / f"ref-{index}{source.suffix.lower() or '.png'}"
+                reference_dir = app_data_dir() / "avatar-runs" / job.id if request.avatar_bindings else job.job_dir
+                reference_dir.mkdir(parents=True, exist_ok=True)
+                target = reference_dir / f"ref-{index}{source.suffix.lower() or '.png'}"
                 shutil.copy2(source, target)
                 job.local_references.append(str(target))
         except OSError as exc:
             job.snapshot_error = str(exc)
-        job.references = list(request.reference_paths)
+        # Avatar profiles may be edited/deleted later; history and replay use the
+        # immutable per-job copies rather than the profile's current image files.
+        job.references = list(job.local_references if request.avatar_bindings else request.reference_paths)
         job.total_steps = request.steps
         job.model_source = request.model_source
         job.model_path = request.model_path
@@ -219,7 +223,7 @@ class JobQueue:
                 prompt=request.prompt,
                 negative_prompt=request.negative_prompt,
                 params=request.to_metadata(),
-                references=list(request.reference_paths),
+                references=list(job.references),
                 seeds=job.seeds,
                 model_source=request.model_source,
                 model_path=request.model_path,
@@ -300,6 +304,10 @@ class JobQueue:
             self._condition.notify_all()
 
         try:
+            # Preparation, installation and validation can construct their own pipeline.
+            # Drop all warm generation components before these jobs touch the GPU.
+            if job.kind in ("prepare", "prepare-klein", "install", "validate"):
+                self.runner.release()
             if job.kind == "generate":
                 self._run_generate(job)
             elif job.kind == "download":
@@ -332,6 +340,12 @@ class JobQueue:
                 job.error = f"{type(exc).__name__}: {exc}"
                 job.message = job.error
         finally:
+            if job.kind in ("prepare", "prepare-klein", "install", "validate"):
+                # A failed preparation may have left a partial model on the runner.
+                self.runner.release()
+            elif job.kind == "generate" and job.status != "done":
+                # Error tracebacks have unwound, so their model locals can be collected.
+                sysinfo.clear_cache()
             job.finished_at = time.time()
             job.elapsed_seconds = round(job.finished_at - (job.started_at or job.finished_at), 2)
             job.emit(

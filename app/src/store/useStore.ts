@@ -12,6 +12,7 @@ import {
   type LibraryItem,
   type GenerateParams,
   type Project,
+  type Avatar,
   type ProjectStorage,
   type EncoderOption,
   type SourceEntry,
@@ -191,8 +192,10 @@ interface Store {
   system: SystemInfo | null;
   sources: SourceEntry[];
   projects: Project[];
+  avatars: Avatar[];
   projectStorage: ProjectStorage | null;
   activeProjectId: string | null;
+  projectBrowserOpen: boolean;
   projectsLoading: boolean;
   encoders: EncoderOption[];
   activeEncoders: Record<string, string | null>;
@@ -222,11 +225,13 @@ interface Store {
   refreshAll: () => Promise<void>;
   refreshEncoders: () => Promise<void>;
   refreshProjects: () => Promise<void>;
+  refreshAvatars: () => Promise<void>;
   createProject: (name?: string) => Promise<string | null>;
-  openProject: (id: string) => Promise<void>;
+  openProject: (id: string, sessionId?: string) => Promise<void>;
+  newProjectSession: (id: string) => Promise<void>;
   renameProject: (id: string, name: string) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
-  saveActiveProject: () => Promise<void>;
+  saveActiveProject: () => Promise<boolean>;
   setView: (view: View) => void;
   setParams: (patch: Partial<GenerateParams>) => void;
   updateSettings: (patch: Partial<Settings>) => void;
@@ -321,8 +326,10 @@ export const useStore = create<Store>()(
       system: null,
       sources: [],
       projects: [],
+      avatars: [],
       projectStorage: null,
       activeProjectId: null,
+      projectBrowserOpen: false,
       projectsLoading: false,
       encoders: [],
       activeEncoders: {},
@@ -400,8 +407,10 @@ export const useStore = create<Store>()(
         // is awaited rather than left in flight by refreshAll: deciding against it needs it
         // to be loaded, or a perfectly valid project id reads as deleted.
         await get().refreshProjects();
+        await get().refreshAvatars();
         const { activeProjectId, projects } = get();
         if (activeProjectId && projects.some((project) => project.id === activeProjectId)) {
+          set({ activeProjectId: null });
           await get().openProject(activeProjectId);
         } else if (activeProjectId) {
           // It was deleted while the app was closed.
@@ -487,42 +496,78 @@ export const useStore = create<Store>()(
         }
       },
 
+      refreshAvatars: async () => {
+        try {
+          const catalog = await api.avatars();
+          set({ avatars: catalog.avatars });
+        } catch (error) {
+          get().toast(`Could not load avatars: ${(error as Error).message}`, "error");
+        }
+      },
+
       /**
        * Open a project: its stored session replaces the live one wholesale.
        *
        * The switch is a snapshot of what is on screen right now, saved first, so leaving a
        * project never loses work typed since the last autosave.
        */
-      openProject: async (id) => {
-        const current = get().activeProjectId;
-        if (current && current !== id) await get().saveActiveProject();
+      openProject: async (id, sessionId) => {
+        if (get().activeProjectId && !await get().saveActiveProject()) return;
         try {
-          const project = await api.project(id);
+          let project = await api.project(id);
+          if (sessionId) project = await api.updateProject(id, { session_id: sessionId });
           set((state) => ({
             activeProjectId: project.id,
+            refineSource: null,
+            projects: state.projects.map((entry) => entry.id === id ? project : entry),
             params: {
-              ...state.params,
+              ...DEFAULT_PARAMS,
               ...project.session,
               reference_paths: project.references,
               project_id: project.id,
+              project_session_id: project.active_session_id,
             },
           }));
           markClean();
-          if (project.missing_references.length) {
-            get().toast(
-              `${project.missing_references.length} reference image(s) in this project are missing`,
-              "error",
-            );
+          const sessionIdToLoad = project.active_session_id;
+          if (!get().jobs.some((job) => job.kind === "generate" && job.payload.project_id === id &&
+              (job.payload.project_session_id ?? "s1") === sessionIdToLoad)) {
+            const history = await api.library({ project_id: id, limit: 500 });
+            const last = history.items.find((item) => (item.params.project_session_id ?? "s1") === sessionIdToLoad);
+            if (last) {
+              const job = await api.job(last.id);
+              set((state) => ({ jobs: [...state.jobs.filter((entry) => entry.id !== job.id), job].sort((a, b) => a.created_at - b.created_at) }));
+            }
           }
-          if (get().view === "library") void get().loadLibrary();
+          if (project.missing_references.length) get().toast(`${project.missing_references.length} reference image(s) in this project are missing`, "error");
         } catch (error) {
-          get().toast(error instanceof ApiError ? error.message : (error as Error).message, "error");
+          get().toast((error as Error).message, "error");
+        }
+      },
+
+      newProjectSession: async (id) => {
+        if (get().activeProjectId && !await get().saveActiveProject()) return;
+        try {
+          const project = await api.createProjectSession(id);
+          set((state) => ({
+            activeProjectId: id,
+            view: "projects",
+            projectBrowserOpen: false,
+            refineSource: null,
+            projects: state.projects.map((entry) => entry.id === id ? project : entry),
+            params: { ...DEFAULT_PARAMS, ...project.session, reference_paths: project.references,
+                      project_id: id, project_session_id: project.active_session_id },
+          }));
+          markClean();
+        } catch (error) {
+          get().toast((error as Error).message, "error");
         }
       },
 
       createProject: async (name) => {
         // Seed from what is on screen: "new project" almost always means "keep working on
         // this, separately", not "throw the current composition away".
+        if (get().activeProjectId && !await get().saveActiveProject()) return null;
         const seed = sessionOf(get().params);
         try {
           const project = await api.createProject({
@@ -531,7 +576,9 @@ export const useStore = create<Store>()(
             prompt: get().params.prompt,
           });
           await get().refreshProjects();
-          set((state) => ({ activeProjectId: project.id, params: { ...state.params, project_id: project.id } }));
+          const saved = await api.updateProject(project.id, { references: get().params.reference_paths });
+          set((state) => ({ activeProjectId: project.id, view: "projects", projectBrowserOpen: false, projects: state.projects.map((entry) => entry.id === saved.id ? saved : entry),
+            params: { ...state.params, reference_paths: saved.references, project_id: project.id, project_session_id: saved.active_session_id } }));
           markClean();
           get().toast(`Project “${project.name}” created`, "success");
           return project.id;
@@ -561,8 +608,9 @@ export const useStore = create<Store>()(
             // Reopen the most recent survivor so compose is never left pointing at a
             // project that no longer exists.
             const next = get().projects[0]?.id ?? null;
+            set({ activeProjectId: null });
             if (next) await get().openProject(next);
-            else set({ activeProjectId: null });
+            else set({ activeProjectId: null, params: { ...get().params, project_id: null, project_session_id: null } });
           }
           get().toast("Project deleted", "info");
         } catch (error) {
@@ -571,16 +619,25 @@ export const useStore = create<Store>()(
       },
 
       saveActiveProject: async () => {
+        cancelAutosave();
         const id = get().activeProjectId;
-        if (!id) return;
+        if (!id) return true;
+        const params = get().params;
         try {
           const project = await api.updateProject(id, {
-            session: sessionOf(get().params),
-            references: get().params.reference_paths,
+            session: sessionOf(params),
+            references: params.reference_paths,
+            session_id: params.project_session_id ?? undefined,
           });
-          set((state) => ({ projects: state.projects.map((entry) => (entry.id === id ? project : entry)) }));
+          set((state) => ({
+            projects: state.projects.map((entry) => (entry.id === id ? project : entry)),
+            ...(state.activeProjectId === id && state.params === params
+              ? { params: { ...params, reference_paths: project.references } } : {}),
+          }));
+          return true;
         } catch (error) {
           get().toast(`Could not save this project: ${(error as Error).message}`, "error");
+          return false;
         }
       },
 
@@ -647,21 +704,21 @@ export const useStore = create<Store>()(
 
       generate: async () => {
         if (get().submitting) return;
-        const params = { ...get().params, reference_paths: [...get().params.reference_paths] };
+        let params = { ...get().params, reference_paths: [...get().params.reference_paths] };
         if (!params.prompt.trim()) {
           get().toast("Write a prompt first.", "error");
           return;
         }
-        // Flush first: reference copies are made server-side on save, so a reference added
-        // a moment ago would not yet belong to the project this run is tagged with.
-        cancelAutosave();
-        await get().saveActiveProject();
-        if (params.guidance <= 1) params.negative_prompt = null;
         set({ submitting: true });
         try {
+          // Save references before submission, then use the project's managed copies.
+          cancelAutosave();
+          if (!await get().saveActiveProject()) return;
+          params = { ...params, reference_paths: [...get().params.reference_paths] };
+          if (params.guidance <= 1) params.negative_prompt = null;
           const job = await api.createJob("generate", params as unknown as Record<string, unknown>);
           get().trackGeneration(job);
-          set({ view: "compose" });
+          if (get().view !== "projects") set({ view: "compose" });
           get().toast(job.status === "queued" ? "Task added to queue" : "Generation started", "info");
         } catch (error) {
           const message = error instanceof ApiError ? error.message : (error as Error).message;
@@ -695,6 +752,7 @@ export const useStore = create<Store>()(
                 : finished.status === "failed" ? finished.error ?? "Generation failed" : "Generation cancelled";
               get().toast(message, finished.status === "done" ? "success" : finished.status === "failed" ? "error" : "info");
               await get().loadLibrary();
+              await get().refreshProjects();
               if (finished.status === "done") set({ selectedItemId: finished.id });
               if (finished.status !== "cancelled") void notifyFinished("Generation " + finished.status, message);
             } catch (error) {
@@ -793,8 +851,10 @@ export const useStore = create<Store>()(
         // Refining a result stays in the project that result belongs to, so the refined
         // image is filed next to what it came from rather than wherever you happened to be.
         const target = result.project_id ?? null;
-        if (target && target !== get().activeProjectId) {
-          await get().openProject(target);
+        const targetSession = result.params.project_session_id ?? "s1";
+        if (target && (target !== get().activeProjectId || targetSession !== get().params.project_session_id)) {
+          await get().openProject(target, targetSession);
+          if (get().activeProjectId !== target || get().params.project_session_id !== targetSession) return;
         }
         const merged: string[] = [output];
         for (const path of result.references ?? []) {
@@ -810,7 +870,7 @@ export const useStore = create<Store>()(
             originalPrompt: result.prompt,
             projectId: target,
           },
-          view: "compose",
+          view: state.view === "projects" ? "projects" : "compose",
           params: {
             ...state.params,
             ...pickRefineSettings(result.params),

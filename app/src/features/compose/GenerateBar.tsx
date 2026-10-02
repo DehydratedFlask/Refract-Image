@@ -1,10 +1,12 @@
 import { useStore } from "../../store/useStore";
+import { generationReferences } from "../../lib/avatars";
 import { Button, Kbd, ProgressBar, useFileUrl } from "../../components/ui";
 import { humanDuration, percent, phaseLabel } from "../../lib/format";
 import { hasNativeHost, pickDirectory } from "../../lib/ipc";
 
 export function GenerateBar() {
   const params = useStore((state) => state.params);
+  const avatars = useStore((state) => state.avatars);
   const generate = useStore((state) => state.generate);
   const cancelJob = useStore((state) => state.cancelJob);
   const currentJob = useStore((state) => state.currentJob);
@@ -21,7 +23,7 @@ export function GenerateBar() {
   const pending = jobs.filter((job) => job.kind === "generate" && ["queued", "running"].includes(job.status));
   const queued = pending.filter((job) => job.status === "queued");
   const source = sources.find((entry) => entry.id === params.model_source);
-  const references = params.reference_paths.length;
+  const references = generationReferences(params.prompt, params.reference_paths, avatars).length;
   const mode = references ? `${references} reference${references === 1 ? "" : "s"}` : "text-to-image";
 
   // Where this run will write. The chosen folder wins; otherwise the service's own
@@ -82,7 +84,7 @@ export function GenerateBar() {
           variant="primary"
           size="large"
           className="grow"
-          disabled={!params.prompt.trim() || submitting}
+          disabled={!params.prompt.trim() || submitting || references > 10}
           onClick={generate}
           title="Generate (⌘⏎)"
         >
@@ -101,7 +103,7 @@ export function GenerateBar() {
           {pending.map((job, index) => (
             <div className="row" key={job.id} style={{ gap: 8 }}>
               <span className="caption mono faint">{index + 1}</span>
-              <span className="caption truncate grow" title={String(job.payload.prompt)}>{String(job.payload.prompt)}</span>
+              <span className="caption selectable grow" title={String(job.payload.prompt)}>{String(job.payload.prompt)}</span>
               <span className="caption muted">{job.status}</span>
               <Button variant="subtle" aria-label={`Cancel task ${index + 1}`} onClick={() => void cancelJob(job.id)}>
                 {job.status === "queued" ? "Remove" : "Cancel"}

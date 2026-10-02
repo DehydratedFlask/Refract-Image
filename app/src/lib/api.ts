@@ -47,10 +47,21 @@ export interface GenerateParams {
   model_source: string;
   model_path?: string | null;
   project_id?: string | null;
+  project_session_id?: string | null;
   save_metadata: boolean;
   output_dir?: string | null;
   output_name?: string | null;
 }
+
+export interface Avatar {
+  id: string;
+  name: string;
+  handle: string;
+  description: string;
+  references: string[];
+  updated_at: number;
+}
+export type AvatarDraft = Pick<Avatar, "name" | "handle" | "description" | "references">;
 
 export interface JobEvent {
   seq: number;
@@ -147,6 +158,14 @@ export interface SourceEntry {
 }
 
 /** A saved workspace: a name, a full generation session, and its own reference copies. */
+export interface ProjectSession {
+  id: string;
+  name: string;
+  session: Partial<GenerateParams>;
+  references: string[];
+  updated_at: number;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -157,6 +176,8 @@ export interface Project {
   references: string[];
   /** Paths whose copy has gone missing; reported rather than silently dropped. */
   missing_references: string[];
+  active_session_id: string;
+  sessions: ProjectSession[];
   reference_count: number;
   generation_count: number;
   running_count: number;
@@ -404,6 +425,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const api = {
+  avatars: () => DEMO_ENABLED ? Promise.resolve({ avatars: [] as Avatar[] }) : request<{ avatars: Avatar[] }>("/api/avatars"),
+  saveAvatar: (body: AvatarDraft, id?: string) => request<Avatar>(id ? `/api/avatars/${id}` : "/api/avatars", {
+    method: id ? "PUT" : "POST", body: JSON.stringify(body),
+  }),
+  deleteAvatar: (id: string) => request<{ deleted: string }>(`/api/avatars/${id}`, { method: "DELETE" }),
   health: () => (DEMO_ENABLED ? Promise.resolve(demoHealth) : request<HealthInfo>("/api/health")),
   system: () => (DEMO_ENABLED ? Promise.resolve(demoSystem) : request<SystemInfo>("/api/system")),
   sources: () =>
@@ -422,9 +448,16 @@ export const api = {
     DEMO_ENABLED
       ? Promise.reject(new ApiError("Projects need the local service", 0))
       : request<Project>("/api/projects", { method: "POST", body: JSON.stringify(body) }),
-  updateProject: (id: string, body: { name?: string; session?: Partial<GenerateParams>; references?: string[] }) =>
+  updateProject: (id: string, body: { name?: string; session?: Partial<GenerateParams>; references?: string[]; session_id?: string }) =>
     request<Project>(`/api/projects/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  createProjectSession: (id: string) =>
+    request<Project>(`/api/projects/${id}/sessions`, { method: "POST" }),
   deleteProject: (id: string) => request<{ deleted: string }>(`/api/projects/${id}`, { method: "DELETE" }),
+  selectModel: (model_source: string, model_path: string | null) =>
+    DEMO_ENABLED ? Promise.resolve({ unloaded: false, deferred: false }) :
+    request<{ unloaded: boolean; deferred: boolean }>("/api/models/select", {
+      method: "POST", body: JSON.stringify({ model_source, model_path }),
+    }),
   encoders: () =>
     DEMO_ENABLED
       ? Promise.resolve({ encoders: [], active: {}, packs: {}, note: "" })

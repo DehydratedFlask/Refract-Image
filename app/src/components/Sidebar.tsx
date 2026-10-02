@@ -50,7 +50,7 @@ export function Sidebar() {
               key={project.id}
               className={`sidebar-row ${project.id === activeProjectId ? "active" : ""}`}
               onClick={() => {
-                useStore.setState({ view: "compose" });
+                useStore.setState({ view: "projects", projectBrowserOpen: false });
                 void openProject(project.id);
               }}
               type="button"
@@ -64,7 +64,7 @@ export function Sidebar() {
             </button>
           ))
         ) : (
-          <button className="sidebar-row" onClick={() => setView("projects")} type="button">
+          <button className="sidebar-row" onClick={() => useStore.setState({ view: "projects", projectBrowserOpen: true })} type="button">
             <span className="glyph" aria-hidden>
               ＋
             </span>
@@ -74,7 +74,7 @@ export function Sidebar() {
         {activeProject ? (
           <button
             className={`sidebar-row ${view === "projects" ? "active" : ""}`}
-            onClick={() => setView("projects")}
+            onClick={() => useStore.setState({ view: "projects", projectBrowserOpen: true })}
             type="button"
             title={activeProject.prompt || activeProject.name}
           >

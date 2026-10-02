@@ -30,6 +30,7 @@ import shutil
 import sqlite3
 import threading
 import time
+import uuid
 from functools import wraps
 from pathlib import Path
 from typing import Any
@@ -131,6 +132,12 @@ class ProjectStore:
         for statement in SCHEMA.split(";"):
             if statement.strip():
                 self._conn.execute(statement)
+        for column in ("sessions_json TEXT NOT NULL DEFAULT '[]'", "active_session_id TEXT NOT NULL DEFAULT 's1'"):
+            try:
+                self._conn.execute(f"ALTER TABLE projects ADD COLUMN {column}")
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc):
+                    raise
         self._conn.commit()
 
     # ---- paths ------------------------------------------------------------
@@ -150,6 +157,10 @@ class ProjectStore:
         item = dict(row)
         item["session"] = json.loads(item.pop("session_json") or "{}")
         item["references"] = json.loads(item.pop("references_json") or "[]")
+        item["sessions"] = json.loads(item.pop("sessions_json") or "[]")
+        if not item["sessions"]:
+            item["sessions"] = [{"id": "s1", "name": "Session 1", "session": item["session"],
+                                 "references": item["references"], "updated_at": item["updated_at"]}]
         item["reference_count"] = len(item["references"])
         # Reported here as well as in get(), so every project the UI holds has the same
         # shape: a list response that omits a field the detail response carries will
@@ -238,41 +249,51 @@ class ProjectStore:
         session: Any = None,
         references: list[str] | None = None,
         name: str | None = None,
+        session_id: str | None = None,
     ) -> dict[str, Any]:
         """Write the whole working state. Both halves are optional and independent."""
         current = self.require(project_id)
-        clean = sanitize_session(session) if session is not None else current["session"]
-        if references is None:
-            stored = list(current["references"])
-        else:
-            stored = self._sync_references(project_id, references)
-
+        selected_id = session_id or current["active_session_id"]
+        selected = next((entry for entry in current["sessions"] if entry["id"] == selected_id), None)
+        if selected is None:
+            raise ProjectError("session not found in this project")
+        clean = sanitize_session(session) if session is not None else selected["session"]
+        stored = (list(selected["references"]) if references is None else
+                  self._sync_references(project_id, references, selected_id))
         now = time.time()
+        selected.update(session=clean, references=stored, updated_at=now)
         self._conn.execute(
-            """
-            UPDATE projects
-               SET name = ?, updated_at = ?, prompt = ?, session_json = ?, references_json = ?
-             WHERE id = ?
-            """,
-            (
-                normalize_name(name) if name else current["name"],
-                now,
-                str(clean.get("prompt", current["prompt"]))[:4000],
-                json.dumps(clean),
-                json.dumps(stored),
-                project_id,
-            ),
+            """UPDATE projects SET name = ?, updated_at = ?, prompt = ?, session_json = ?,
+               references_json = ?, sessions_json = ?, active_session_id = ? WHERE id = ?""",
+            (normalize_name(name) if name else current["name"], now, str(clean.get("prompt", ""))[:4000],
+             json.dumps(clean), json.dumps(stored), json.dumps(current["sessions"]), selected_id, project_id),
         )
         self._conn.commit()
         return self.require(project_id)
 
-    def _sync_references(self, project_id: str, incoming: list[str]) -> list[str]:
+    @synchronized
+    def create_session(self, project_id: str) -> dict[str, Any]:
+        current = self.require(project_id)
+        sessions = current["sessions"]
+        if len(sessions) >= 200:
+            raise ProjectError("There are already 200 sessions in this project.")
+        session_id = "s" + uuid.uuid4().hex
+        clean = {**current["session"], "prompt": "", "negative_prompt": None, "seed": None}
+        clean.pop("output_name", None)
+        now = time.time()
+        sessions.append({"id": session_id, "name": f"Session {len(sessions) + 1}",
+                         "session": clean, "references": [], "updated_at": now})
+        self._conn.execute("UPDATE projects SET sessions_json = ? WHERE id = ?",
+                           (json.dumps(sessions), project_id))
+        return self.save_session(project_id, session_id=session_id)
+
+    def _sync_references(self, project_id: str, incoming: list[str], session_id: str = "s1") -> list[str]:
         """Copy new references in, keep known ones, drop the copies that were removed.
 
         Idempotent: saving the same list twice copies nothing the second time, because an
         image already inside this project's own refs directory is recognised by path.
         """
-        root = self.refs_dir(project_id)
+        root = self.refs_dir(project_id) / session_id
         root.mkdir(parents=True, exist_ok=True)
         keep: list[str] = []
         seen: set[str] = set()
@@ -295,7 +316,7 @@ class ProjectStore:
                 continue
             if source.suffix.lower() not in IMAGE_SUFFIXES:
                 continue
-            target = root / f"{len(keep) + 1:02d}{source.suffix.lower()}"
+            target = root / f"{uuid.uuid4().hex}{source.suffix.lower()}"
             try:
                 # copy2 rather than move: the original is the user's file and stays theirs.
                 shutil.copy2(resolved, target)

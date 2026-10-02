@@ -14,6 +14,7 @@ export function TopBar() {
   const sources = useStore((state) => state.sources);
   const params = useStore((state) => state.params);
   const setParams = useStore((state) => state.setParams);
+  const newSession = useStore((state) => state.newProjectSession);
   const clearReferences = useStore((state) => state.clearReferences);
   const openSettings = useStore.setState;
   const inputRef = useRef<HTMLInputElement>(null);
@@ -116,9 +117,12 @@ export function TopBar() {
         icon={<span aria-hidden>＋</span>}
         title="New generation (⌘N)"
         onClick={() => {
-          setParams({ prompt: "", reference_paths: [], seed: null });
-          clearReferences();
-          setView("compose");
+          if (activeProjectId) void newSession(activeProjectId);
+          else {
+            setParams({ prompt: "", reference_paths: [], seed: null });
+            clearReferences();
+            setView("compose");
+          }
         }}
       >
         New

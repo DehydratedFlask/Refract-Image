@@ -26,6 +26,7 @@ from .library import Library
 from .mock_runner import MockRunner
 from .paths import app_data_dir, hf_cache_dir, jobs_dir, models_dir, outputs_dir, projects_dir
 from .projects import ProjectError, ProjectStore
+from .avatars import AvatarError, AvatarStore
 from .runner import MfluxRunner
 from .schemas import GenerateRequest, InstallRequest, ValidateRequest
 
@@ -40,6 +41,7 @@ class AppState:
         self.runner = MockRunner() if self.mock else MfluxRunner()
         self.library = Library()
         self.projects = ProjectStore(self.library.connection, projects_dir(), self.library.lock)
+        self.avatars = AvatarStore(self.library.connection, app_data_dir() / "avatars", self.library.lock)
         self.queue = JobQueue(runner=self.runner, library=self.library)
 
 
@@ -120,6 +122,33 @@ def create_app(token: str, force_mock: bool = False) -> FastAPI:
     def list_encoders() -> dict[str, Any]:
         return encoders.describe_encoders()
 
+    # ---- avatars ----------------------------------------------------------
+    @app.get("/api/avatars", dependencies=[guard])
+    def list_avatars() -> dict[str, Any]:
+        return {"avatars": state.avatars.list()}
+
+    @app.post("/api/avatars", dependencies=[guard], status_code=201)
+    def create_avatar(body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return state.avatars.save(body)
+        except AvatarError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.put("/api/avatars/{avatar_id}", dependencies=[guard])
+    def update_avatar(avatar_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return state.avatars.save(body, avatar_id)
+        except AvatarError as exc:
+            raise HTTPException(status_code=404 if "not found" in str(exc) else 400, detail=str(exc)) from exc
+
+    @app.delete("/api/avatars/{avatar_id}", dependencies=[guard])
+    def delete_avatar(avatar_id: str) -> dict[str, Any]:
+        try:
+            state.avatars.delete(avatar_id)
+        except AvatarError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"deleted": avatar_id}
+
     # ---- projects ---------------------------------------------------------
     def _project_payload(project: dict[str, Any]) -> dict[str, Any]:
         """A project plus the counts the sidebar shows, computed in one place."""
@@ -160,7 +189,7 @@ def create_app(token: str, force_mock: bool = False) -> FastAPI:
         """Autosave target: the whole session, or just a new name."""
         payload = body or {}
         try:
-            if "session" not in payload and "references" not in payload:
+            if "session" not in payload and "references" not in payload and "session_id" not in payload:
                 project = state.projects.rename(project_id, payload.get("name", ""))
             else:
                 project = state.projects.save_session(
@@ -168,10 +197,18 @@ def create_app(token: str, force_mock: bool = False) -> FastAPI:
                     session=payload.get("session"),
                     references=payload.get("references"),
                     name=payload.get("name"),
+                    session_id=payload.get("session_id"),
                 )
         except ProjectError as exc:
             raise HTTPException(status_code=404 if "no project" in str(exc) else 400, detail=str(exc)) from exc
         return _project_payload(project)
+
+    @app.post("/api/projects/{project_id}/sessions", dependencies=[guard], status_code=201)
+    def create_project_session(project_id: str) -> dict[str, Any]:
+        try:
+            return _project_payload(state.projects.create_session(project_id))
+        except ProjectError as exc:
+            raise HTTPException(status_code=404 if "no project" in str(exc) else 400, detail=str(exc)) from exc
 
     @app.delete("/api/projects/{project_id}", dependencies=[guard])
     def delete_project(project_id: str) -> dict[str, Any]:
@@ -186,6 +223,16 @@ def create_app(token: str, force_mock: bool = False) -> FastAPI:
         if payload.component == "transformer" and payload.base_model_path and report.get("ok"):
             report["verification"] = ingest.verify_loads(payload.base_model_path)
         return report
+
+    @app.post("/api/models/select", dependencies=[guard])
+    def select_model(payload: dict[str, Any]) -> dict[str, bool]:
+        source_id = payload.get("model_source")
+        if source_id not in model_store.SOURCES:
+            raise HTTPException(status_code=422, detail="unknown model source")
+        model_path = payload.get("model_path")
+        if model_path is not None and not isinstance(model_path, str):
+            raise HTTPException(status_code=422, detail="model_path must be a string or null")
+        return state.runner.select_model(source_id, model_path)
 
     @app.post("/api/models/delete", dependencies=[guard])
     def delete_model(payload: dict[str, Any]) -> dict[str, Any]:
@@ -208,7 +255,12 @@ def create_app(token: str, force_mock: bool = False) -> FastAPI:
                     for err in getattr(exc, "errors", lambda: [])()
                 ] or [{"loc": [], "msg": str(exc)}]
                 raise HTTPException(status_code=422, detail=detail) from exc
-            return state.queue.submit_generate(request).to_dict()
+            try:
+                with state.library.lock:
+                    request = state.avatars.resolve(request)
+                    return state.queue.submit_generate(request).to_dict()
+            except AvatarError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
         if kind == "install":
             InstallRequest(**payload)
         if kind == "validate":

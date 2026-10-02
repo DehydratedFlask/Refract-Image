@@ -30,6 +30,9 @@ class MockRunner:
     def release(self, model=None) -> None:
         return None
 
+    def select_model(self, source_id: str, model_path: str | None = None) -> dict[str, bool]:
+        return {"unloaded": False, "deferred": False}
+
     def generate(
         self,
         request,

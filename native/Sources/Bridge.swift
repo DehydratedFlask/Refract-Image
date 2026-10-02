@@ -112,6 +112,10 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             NSWorkspace.shared.activateFileViewerSelecting([url])
             succeed(id, url.path)
 
+        case "copy_text":
+            NSPasteboard.general.clearContents()
+            succeed(id, NSPasteboard.general.setString(string(args, "text") ?? "", forType: .string))
+
         case "copy_file":
             copyFile(id: id, args: args)
 

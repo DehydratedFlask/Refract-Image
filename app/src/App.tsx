@@ -1,3 +1,4 @@
+import { api } from "./lib/api";
 import { useEffect, useState } from "react";
 import { useStore } from "./store/useStore";
 import { Sidebar } from "./components/Sidebar";
@@ -9,6 +10,8 @@ import { LibraryView } from "./features/library/LibraryView";
 import { ModelsView } from "./features/models/ModelsView";
 import { ProjectsView } from "./features/projects/ProjectsView";
 import { installWindowDragRegion, onFileDrop, onMenuCommand, revealInFinder, saveImageAs } from "./lib/ipc";
+
+let modelSelectionRequest: Promise<unknown> = Promise.resolve();
 
 /**
  * Move to the next project without leaving Compose — the common case is comparing two
@@ -35,12 +38,24 @@ export default function App() {
   const cheatSheetOpen = useStore((state) => state.cheatSheetOpen);
   const onboardingOpen = useStore((state) => state.onboardingOpen);
   const currentJob = useStore((state) => state.currentJob);
+  const modelSource = useStore((state) => state.params.model_source);
+  const modelPath = useStore((state) => state.params.model_path ?? null);
   const [dragActive, setDragActive] = useState(false);
 
   // Boot: connect, load state, and pick a sensible first view.
   useEffect(() => {
     void useStore.getState().init();
   }, []);
+
+  // Every model change (including restored project sessions) evicts the previous weights.
+  useEffect(() => {
+    if (!ready) return;
+    modelSelectionRequest = modelSelectionRequest.catch(() => undefined)
+      .then(() => api.selectModel(modelSource, modelPath));
+    void modelSelectionRequest.catch((error: Error) => {
+      useStore.getState().toast(`Could not unload the previous model: ${error.message}`, "error");
+    });
+  }, [ready, modelSource, modelPath]);
 
   // Theme: system by default, with an explicit override for either palette.
   useEffect(() => {
@@ -54,7 +69,7 @@ export default function App() {
     return onFileDrop(
       (paths) => {
         useStore.getState().addReferences(paths);
-        useStore.setState({ view: "compose" });
+        if (useStore.getState().view !== "projects") useStore.setState({ view: "compose" });
       },
       setDragActive,
     );
@@ -71,8 +86,11 @@ export default function App() {
         case "new":
           // A new generation belongs to whatever project is open, so it inherits that
           // project's settings rather than resetting the whole session.
-          store.setParams({ prompt: "", reference_paths: [], seed: null });
-          useStore.setState({ view: "compose" });
+          if (store.activeProjectId) void store.newProjectSession(store.activeProjectId);
+          else {
+            store.setParams({ prompt: "", reference_paths: [], seed: null });
+            useStore.setState({ view: "compose" });
+          }
           break;
         case "new-project":
           void store.createProject();
@@ -138,8 +156,11 @@ export default function App() {
       }
       if (meta && event.key.toLowerCase() === "n") {
         event.preventDefault();
-        store.setParams({ prompt: "", reference_paths: [], seed: null });
-        useStore.setState({ view: "compose" });
+        if (store.activeProjectId) void store.newProjectSession(store.activeProjectId);
+        else {
+          store.setParams({ prompt: "", reference_paths: [], seed: null });
+          useStore.setState({ view: "compose" });
+        }
         return;
       }
       if (meta && event.key.toLowerCase() === "p") {
@@ -221,7 +242,7 @@ export default function App() {
         <main className="content">
           {view === "compose" ? <ComposeView dragActive={dragActive} /> : null}
           {view === "library" ? <LibraryView /> : null}
-          {view === "projects" ? <ProjectsView /> : null}
+          {view === "projects" ? <ProjectsView dragActive={dragActive} /> : null}
           {view === "models" ? <ModelsView /> : null}
         </main>
       </div>
@@ -231,7 +252,7 @@ export default function App() {
       {onboardingOpen ? <OnboardingSheet /> : null}
       <ToastHost />
       {/* A running job is visible from any view, so its state is announced once per change. */}
-      {currentJob && ["queued", "running"].includes(currentJob.status) && view !== "compose" ? (
+      {currentJob && ["queued", "running"].includes(currentJob.status) && view !== "compose" && view !== "projects" ? (
         <div className="toast-host" style={{ left: "auto" }}>
           <Button variant="default" onClick={() => useStore.setState({ view: "compose" })}>
             <span className="spinner" /> {currentJob.step}/{currentJob.total_steps || "…"} — show preview

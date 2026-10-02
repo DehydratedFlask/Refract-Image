@@ -36,6 +36,8 @@ PHASES = (
 
 class GenerateRequest(BaseModel):
     prompt: str = Field(min_length=1)
+    resolved_prompt: str | None = None
+    avatar_bindings: list[dict] = Field(default_factory=list)
     negative_prompt: str | None = None
     reference_paths: list[str] = Field(default_factory=list)
     width: int | None = None
@@ -57,6 +59,7 @@ class GenerateRequest(BaseModel):
     #: Which project this run belongs to, so the Library can be filtered to it later.
     #: Optional: a run with no project is still valid and simply stays unfiled.
     project_id: str | None = None
+    project_session_id: str | None = None
     save_metadata: bool = True
     output_dir: str | None = None
     output_name: str | None = None

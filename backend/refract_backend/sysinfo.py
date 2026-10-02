@@ -88,10 +88,17 @@ def clear_cache() -> None:
     """gc + MLX buffer cache drop. Called between jobs so long sessions stay flat."""
     import gc
 
-    gc.collect()
     try:
         import mlx.core as mx
-
+    except ImportError:
+        gc.collect()
+        return
+    try:
+        mx.synchronize()
+    except Exception:
+        pass
+    gc.collect()
+    try:
         mx.clear_cache()
     except Exception:
         pass

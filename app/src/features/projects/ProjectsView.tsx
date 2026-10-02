@@ -1,17 +1,10 @@
-/**
- * Projects: the list of saved workspaces, and the one currently open.
- *
- * This is a switcher rather than a full editor — the composition itself still lives in
- * Compose, and switching projects restores the whole session there. That split is
- * deliberate: one place to write a prompt, and one place to decide which work you are
- * doing it for.
- */
-
+/** Projects contain saved generation sessions and their editor. */
 import { useEffect, useState } from "react";
 import { useStore } from "../../store/useStore";
 import { Button, ConfirmButton, EmptyState, Pill, useFileUrl } from "../../components/ui";
 import type { Project } from "../../lib/api";
 import { relativeTime } from "../../lib/format";
+import { ComposeView } from "../compose/ComposeView";
 import { openPath } from "../../lib/ipc";
 
 function ProjectThumb({ project }: { project: Project }) {
@@ -25,7 +18,7 @@ function ProjectThumb({ project }: { project: Project }) {
   );
 }
 
-export function ProjectsView() {
+export function ProjectsView({ dragActive }: { dragActive: boolean }) {
   const projects = useStore((state) => state.projects);
   const storage = useStore((state) => state.projectStorage);
   const activeProjectId = useStore((state) => state.activeProjectId);
@@ -34,8 +27,12 @@ export function ProjectsView() {
   const renameProject = useStore((state) => state.renameProject);
   const deleteProject = useStore((state) => state.deleteProject);
   const refreshProjects = useStore((state) => state.refreshProjects);
-  const saveActiveProject = useStore((state) => state.saveActiveProject);
   const toast = useStore((state) => state.toast);
+  const newSession = useStore((state) => state.newProjectSession);
+  const browsing = useStore((state) => state.projectBrowserOpen);
+  const setBrowsing = (projectBrowserOpen: boolean) => useStore.setState({ projectBrowserOpen });
+  const [switching, setSwitching] = useState(false);
+  const activeProject = projects.find((entry) => entry.id === activeProjectId);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
 
@@ -48,6 +45,52 @@ export function ProjectsView() {
     if (draft.trim() && draft.trim() !== project.name) void renameProject(project.id, draft);
   };
 
+  const startProject = async () => {
+    const id = await createProject();
+    if (id) setBrowsing(false);
+  };
+  const enterProject = async (id: string) => {
+    setSwitching(true);
+    await openProject(id);
+    setSwitching(false);
+    setBrowsing(false);
+  };
+
+  if (activeProject && !browsing) {
+    return (
+      <div className="project-workspace">
+        <div className="project-session-bar row">
+          <Button variant="subtle" onClick={() => setBrowsing(true)}>← All projects</Button>
+          <strong>{activeProject.name}</strong>
+          <select className="select" style={{ maxWidth: 300 }} aria-label="Project session"
+            value={activeProject.active_session_id} disabled={switching}
+            onChange={async (event) => {
+              const sessionId = event.target.value;
+              setSwitching(true);
+              await openProject(activeProject.id, sessionId);
+              setSwitching(false);
+            }}>
+            {activeProject.sessions.map((entry) => <option key={entry.id} value={entry.id}>
+              {entry.name}{entry.session.prompt ? ` — ${entry.session.prompt.slice(0, 50)}` : ""}
+            </option>)}
+          </select>
+          <Button variant="primary" disabled={switching} onClick={async () => {
+            setSwitching(true);
+            await newSession(activeProject.id);
+            setSwitching(false);
+          }}>＋ New session</Button>
+          <div className="grow" />
+          <Pill>{activeProject.generation_count} results</Pill>
+          <Button variant="subtle" onClick={() => {
+            useStore.setState({ view: "library", libraryProjectFilter: activeProject.id });
+            void useStore.getState().loadLibrary();
+          }}>Project images</Button>
+        </div>
+        <ComposeView dragActive={dragActive} />
+      </div>
+    );
+  }
+
   if (!projects.length) {
     return (
       <EmptyState
@@ -55,7 +98,7 @@ export function ProjectsView() {
         title="No projects yet"
         body="A project saves your prompt, your reference images and every setting, so you can put one on hold, start something else, and come back to it exactly as you left it. Reference images are copied into the project, so they survive even if the originals move."
         action={
-          <Button variant="primary" onClick={() => void createProject()}>
+          <Button variant="primary" onClick={() => void startProject()}>
             New project
           </Button>
         }
@@ -72,7 +115,7 @@ export function ProjectsView() {
           </span>
           <div className="grow" />
           <Pill>{storage?.total_size_human ?? "—"} of references</Pill>
-          <Button variant="primary" onClick={() => void createProject()}>
+          <Button variant="primary" onClick={() => void startProject()}>
             ＋ New project
           </Button>
         </div>
@@ -102,17 +145,18 @@ export function ProjectsView() {
                     <button
                       className="project-name"
                       title={project.prompt || project.name}
-                      onClick={() => void openProject(project.id)}
+                      onClick={() => void enterProject(project.id)}
                       type="button"
                     >
                       {project.name}
                     </button>
                   )}
-                  <div className="caption faint truncate">
+                  <div className="caption faint truncate selectable">
                     {project.prompt || "No prompt yet"} · edited {relativeTime(project.updated_at)}
                   </div>
                   <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
                     {active ? <Pill tone="accent">open</Pill> : null}
+                    <Pill>{project.sessions.length} sessions</Pill>
                     <Pill>
                       {project.reference_count} ref{project.reference_count === 1 ? "" : "s"}
                     </Pill>
@@ -127,11 +171,17 @@ export function ProjectsView() {
                 <div className="col" style={{ gap: 4, alignItems: "flex-end" }}>
                   <Button
                     variant={active ? "subtle" : "default"}
-                    onClick={() => void openProject(project.id)}
-                    title={active ? "Already open — save any pending edits" : "Restore this project's prompt, references and settings"}
+                    onClick={() => void enterProject(project.id)}
+                    title="Open this project’s sessions and generation workspace"
                   >
-                    {active ? "Save now" : "Open"}
+                    Open workspace
                   </Button>
+                  <Button variant="subtle" disabled={switching} onClick={async () => {
+                    setSwitching(true);
+                    await newSession(project.id);
+                    setSwitching(false);
+                    setBrowsing(false);
+                  }}>＋ New session</Button>
                   {active ? (
                     <Button variant="subtle" onClick={() => void openPath(storage?.dir ?? "")} title={storage?.dir}>
                       ⌸ References
@@ -153,7 +203,6 @@ export function ProjectsView() {
                       confirmLabel="Delete?"
                       title="Delete this project. Its reference copies go too — generated images are kept."
                       onConfirm={() => {
-                        if (active) void saveActiveProject();
                         void deleteProject(project.id);
                         if (active) toast("Project deleted — its generated images are still in the Library", "info");
                       }}

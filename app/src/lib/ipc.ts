@@ -294,3 +294,14 @@ export function installWindowDragRegion(): () => void {
   window.addEventListener("mousedown", onDown, true);
   return () => window.removeEventListener("mousedown", onDown, true);
 }
+
+/** Copy prompt text in both the native app and browser. */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    if (isNativeHost()) return await hostInvoke<boolean>("copy_text", { text });
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}

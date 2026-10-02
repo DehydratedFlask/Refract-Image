@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button, Segmented, useFileUrl } from "../../components/ui";
 import { baseName } from "../../lib/format";
@@ -22,12 +23,16 @@ export function CompareView({
   outputs,
   actions,
   caption,
+  allowFullscreen = true,
 }: {
   references: string[];
   outputs: string[];
   actions?: ReactNode;
   caption?: ReactNode;
+  allowFullscreen?: boolean;
 }) {
+  const [fullscreenPath, setFullscreenPath] = useState<string | null>(null);
+  const dragged = useRef(false);
   const [mode, setMode] = useState<Mode>(outputs.length && references.length ? "split" : "result");
   const [referenceIndex, setReferenceIndex] = useState(0);
   const [outputIndex, setOutputIndex] = useState(0);
@@ -73,11 +78,13 @@ export function CompareView({
 
   const startPan = (event: React.PointerEvent) => {
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    dragged.current = false;
     panRef.current = { x: event.clientX, y: event.clientY, origin: transform };
   };
   const movePan = (event: React.PointerEvent) => {
     if (!panRef.current) return;
     const { x, y, origin } = panRef.current;
+    if (Math.hypot(event.clientX - x, event.clientY - y) > 4) dragged.current = true;
     setTransform({ ...origin, x: origin.x + (event.clientX - x), y: origin.y + (event.clientY - y) });
   };
   const endPan = () => {
@@ -86,6 +93,10 @@ export function CompareView({
 
   const imageStyle: React.CSSProperties = {
     transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
+  };
+
+  const openFullscreen = () => {
+    if (allowFullscreen && output && !dragged.current) setFullscreenPath(output);
   };
 
   const renderPane = (url: string | null, path: string | undefined, label: string) => (
@@ -105,6 +116,7 @@ export function CompareView({
         onPointerMove={movePan}
         onPointerUp={endPan}
         onPointerCancel={endPan}
+        onClick={path === output ? openFullscreen : undefined}
         style={{ cursor: "grab" }}
       >
         {url ? <img src={url} alt={label} style={imageStyle} draggable={false} /> : <span className="faint">nothing to show</span>}
@@ -174,7 +186,8 @@ export function CompareView({
         ) : null}
 
         <div className="grow" />
-        <span className="caption faint">scroll to zoom · drag to pan</span>
+        <span className="caption faint">scroll to zoom · drag to pan{allowFullscreen ? " · click result to expand" : ""}</span>
+        {allowFullscreen && output ? <Button variant="subtle" onClick={() => setFullscreenPath(output)}>Full screen</Button> : null}
         <Button variant="subtle" onClick={() => setTransform(FIT)} title="Reset zoom and pan">
           {Math.round(transform.scale * 100)}%
         </Button>
@@ -202,6 +215,7 @@ export function CompareView({
               onPointerMove={isWipe ? undefined : movePan}
               onPointerUp={endPan}
               onPointerCancel={endPan}
+              onClick={openFullscreen}
               style={{ cursor: isWipe ? "col-resize" : "grab", position: "relative" }}
             >
               {isWipe ? (
@@ -215,9 +229,10 @@ export function CompareView({
                       draggable={false}
                     />
                   ) : null}
-                  <div className="wipe-handle" style={{ left: `${wipe * 100}%` }} onPointerDown={startWipeDrag} />
+                  <div className="wipe-handle" style={{ left: `${wipe * 100}%` }} onPointerDown={startWipeDrag} onClick={(event) => event.stopPropagation()} />
                   <div
                     className="floating-bar"
+                    onClick={(event) => event.stopPropagation()}
                     style={{ position: "absolute", bottom: 10, left: "50%", transform: "translateX(-50%)" }}
                   >
                     <span className="caption muted">reference</span>
@@ -243,6 +258,8 @@ export function CompareView({
         )}
       </div>
 
+      {fullscreenPath ? <ImageViewer path={fullscreenPath} onClose={() => setFullscreenPath(null)} /> : null}
+
       <div className="compare-footer col" style={{ gap: 8 }}>
         <div className="caption muted">{caption}</div>
         {actions ? <div className="floating-bar compare-actions">{actions}</div> : null}
@@ -253,4 +270,25 @@ export function CompareView({
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function ImageViewer({ path, onClose }: { path: string; onClose: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const element = dialog.current;
+    element?.showModal();
+    return () => element?.close();
+  }, []);
+  return createPortal(
+    <dialog ref={dialog} className="image-viewer" aria-label="Full-screen image" onCancel={(event) => {
+      event.preventDefault();
+      onClose();
+    }} onKeyDown={(event) => event.stopPropagation()}>
+      <div className="row" style={{ padding: "12px 16px", gap: 8 }}>
+        <span className="grow truncate selectable">{baseName(path)}</span>
+        <Button autoFocus onClick={onClose}>Close · Esc</Button>
+      </div>
+      <CompareView references={[]} outputs={[path]} allowFullscreen={false} />
+    </dialog>, document.body,
+  );
 }

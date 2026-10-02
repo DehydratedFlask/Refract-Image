@@ -1,3 +1,4 @@
+import { PromptText } from "../../components/PromptText";
 import { useEffect, useState } from "react";
 import { useStore } from "../../store/useStore";
 import { Button, ConfirmButton, EmptyState, Pill, useFileUrl } from "../../components/ui";
@@ -47,7 +48,7 @@ function GridCard({
           <ConfirmButton label="Delete" confirmLabel="Delete files?" onConfirm={onDelete} title="Delete this result and its generated files" />
         ) : null}
       </div>
-      <div className="meta truncate">{item.prompt}</div>
+      <div className="meta truncate selectable" onClick={(event) => event.stopPropagation()}>{item.prompt}</div>
     </div>
   );
 }
@@ -170,13 +171,14 @@ export function LibraryView() {
             <>
               <div className="col" style={{ gap: 6, padding: 16 }}>
                 <div className="row" style={{ gap: 8 }}>
-                  <span style={{ fontWeight: 600 }}>{selected.prompt}</span>
+
                   <div className="grow" />
                   <Pill tone={selected.status === "done" ? "ok" : selected.status === "cancelled" ? "warn" : "bad"}>
                     {selected.status}
                   </Pill>
                   <Pill>{selected.model_source}</Pill>
                 </div>
+                <PromptText prompt={selected.prompt} />
                 <div className="caption muted selectable">
                   {selected.width ?? "?"}×{selected.height ?? "?"} · {selected.params.steps ?? "?"} steps · seed{" "}
                   {(selected.seeds ?? []).join(", ") || "—"} · {humanDuration(selected.duration_s)} ·{" "}

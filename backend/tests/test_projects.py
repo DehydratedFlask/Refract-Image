@@ -256,3 +256,61 @@ def test_a_database_written_before_projects_still_opens(tmp_path):
     # Opening it twice must not trip over its own migration.
     library.close()
     assert Library(db).get("old")["id"] == "old"
+
+def test_sessions_preserve_independent_drafts_and_references(client, image):
+    project = client.post("/api/projects", json={"name": "Sessions"}).json()
+    url = f"/api/projects/{project['id']}"
+    first = client.put(url, json={"session": {"prompt": "first", "steps": 12}, "references": [str(image)]}).json()
+    first_id = first["active_session_id"]
+    first_reference = first["references"][0]
+    second = client.post(url + "/sessions").json()
+    second_id = second["active_session_id"]
+    assert second_id != first_id
+    assert second["session"]["prompt"] == ""
+    assert second["session"]["steps"] == 12
+    assert second["references"] == []
+    assert Path(first_reference).is_file()
+    client.put(url, json={"session_id": second_id, "session": {"prompt": "second", "steps": 20}, "references": [str(image)]})
+    restored = client.put(url, json={"session_id": first_id}).json()
+    assert restored["session"] == {"prompt": "first", "steps": 12}
+    assert restored["references"] == [first_reference]
+    sessions = {entry["id"]: entry for entry in restored["sessions"]}
+    assert sessions[second_id]["session"]["prompt"] == "second"
+    assert sessions[second_id]["references"] != restored["references"]
+    client.put(url, json={"references": []})
+    assert Path(sessions[second_id]["references"][0]).is_file()
+    assert client.put(url, json={"session_id": "../nope"}).status_code == 400
+
+
+def test_legacy_projects_gain_a_session_without_losing_work(tmp_path):
+    import sqlite3
+    from refract_backend.projects import ProjectStore, SCHEMA
+    db = tmp_path / "legacy.db"
+    connection = sqlite3.connect(db)
+    connection.row_factory = sqlite3.Row
+    connection.executescript(SCHEMA)
+    connection.execute("INSERT INTO projects (id, name, created_at, updated_at, session_json, references_json) VALUES ('p1', 'Legacy', 1, 1, ?, '[]')", ('{"prompt":"kept", "steps":17}',))
+    connection.commit()
+    store = ProjectStore(connection, tmp_path / "projects")
+    migrated = store.require("p1")
+    assert migrated["sessions"][0]["session"] == {"prompt": "kept", "steps": 17}
+    store.create_session("p1")
+    store.close()
+    connection = sqlite3.connect(db)
+    connection.row_factory = sqlite3.Row
+    reopened = ProjectStore(connection, tmp_path / "projects")
+    assert len(reopened.require("p1")["sessions"]) == 2
+    assert reopened.save_session("p1", session_id="s1")["session"]["prompt"] == "kept"
+    reopened.close()
+
+
+def test_generation_remembers_its_project_session(client):
+    project = client.post("/api/projects", json={"name": "Filed"}).json()
+    session = client.post(f"/api/projects/{project['id']}/sessions").json()
+    session_id = session["active_session_id"]
+    job = client.post("/api/jobs", json={"kind": "generate", "payload": {
+        "prompt": "session result", "steps": 1, "project_id": project["id"], "project_session_id": session_id,
+    }}).json()
+    assert job["payload"]["project_session_id"] == session_id
+    item = client.get(f"/api/library?project_id={project['id']}").json()["items"][0]
+    assert item["params"]["project_session_id"] == session_id

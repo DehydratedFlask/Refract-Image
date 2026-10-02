@@ -18,6 +18,7 @@ import json
 import random
 import re
 import time
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -181,6 +182,10 @@ class MfluxRunner:
     def __init__(self) -> None:
         self._model: Any | None = None
         self._key: tuple[str | None, int | None, str] | None = None
+        self._lifecycle_lock = threading.RLock()
+        self._running = False
+        self._selected_model: tuple[str, str | None] | None = None
+        self._warm_selection: tuple[str, str | None] | None = None
 
     # ---- model lifecycle --------------------------------------------------
     def build_model(
@@ -233,10 +238,51 @@ class MfluxRunner:
         if model is None or model is self._model:
             self._model = None
             self._key = None
+            self._warm_selection = None
         sysinfo.clear_cache()
 
+    def select_model(self, source_id: str, model_path: str | None = None) -> dict[str, bool]:
+        """Evict an idle pipeline immediately; an active run releases it on completion."""
+        selected = (source_id, model_path or None)
+        with self._lifecycle_lock:
+            self._selected_model = selected
+            if self._running:
+                return {"unloaded": False, "deferred": selected != self._warm_selection}
+            if self._model is not None and selected != self._warm_selection:
+                self.release()
+                return {"unloaded": True, "deferred": False}
+            return {"unloaded": False, "deferred": False}
+
     # ---- generation -------------------------------------------------------
-    def generate(
+    def generate(self, request: GenerateRequest, reporter: ReporterFn, cancel_event,
+                 job_dir: Path | None = None) -> dict[str, Any]:
+        selection = (request.model_source, request.model_path or None)
+        with self._lifecycle_lock:
+            if self._running:
+                raise RuntimeError("A generation is already running")
+            self._running = True
+            self._warm_selection = selection
+        succeeded = False
+        try:
+            result = self._generate(request, reporter, cancel_event, job_dir)
+            succeeded = True
+            return result
+        finally:
+            # The inner frame's model, encoder, VAE and callback locals are gone before
+            # clearing allocations. Queued jobs retain their own requested settings, but
+            # a model that is no longer selected never stays warm after one finishes.
+            with self._lifecycle_lock:
+                self._running = False
+                if succeeded:
+                    self._warm_selection = selection
+                if not succeeded or request.low_ram or (
+                    self._selected_model is not None and self._selected_model != selection
+                ):
+                    self.release()
+                else:
+                    sysinfo.clear_cache()
+
+    def _generate(
         self,
         request: GenerateRequest,
         reporter: ReporterFn,
@@ -274,6 +320,8 @@ class MfluxRunner:
 
         load_started = time.time()
         model, bits = self.build_model(resolved.path, resolved.quantize, resolved.source_id, resolved.family)
+        with self._lifecycle_lock:
+            self._warm_selection = (request.model_source, request.model_path or None)
         reporter(
             {
                 "phase": "loading",
@@ -353,7 +401,7 @@ class MfluxRunner:
                     height = request.height or 1024
                     image = model.generate_image(
                         seed=actual_seed,
-                        prompt=request.prompt,
+                        prompt=request.resolved_prompt or request.prompt,
                         num_inference_steps=min(request.steps, _FLUX2_MAX_STEPS),
                         width=width,
                         height=height,
@@ -363,7 +411,7 @@ class MfluxRunner:
                 else:
                     image = model.generate_image(
                         seed=actual_seed,
-                        prompt=request.prompt,
+                        prompt=request.resolved_prompt or request.prompt,
                         num_inference_steps=request.steps,
                         width=request.width,
                         height=request.height,
