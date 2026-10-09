@@ -18,13 +18,48 @@ def avatar(client, paths, **overrides):
 
 def test_avatar_copies_images_and_persists_across_restart(client, tmp_path, token):
     source = make_reference(tmp_path)
-    saved = avatar(client, [source])
+    saved = avatar(client, [source], reference_roles=["face"])
+    assert saved["reference_roles"] == ["face"]
     source.unlink()
     assert Path(saved["references"][0]).is_file()
     assert client.get("/api/files", params={"path": saved["references"][0], "token": token}).status_code == 200
     with TestClient(create_app(token, force_mock=True)) as second:
         second.headers.update({"X-Refract-Token": token})
         assert second.get("/api/avatars").json()["avatars"] == [saved]
+
+
+def test_face_and_body_labels_are_bound_alongside_scene_references(client, tmp_path):
+    scene = make_reference(tmp_path, "scene.png")
+    saved = avatar(client, [make_reference(tmp_path, "face.png"), make_reference(tmp_path, "body.png")],
+                   reference_roles=["face", "body"])
+    assert client.get("/api/avatars").json()["avatars"][0]["reference_roles"] == ["face", "body"]
+    job = submit_generate(client, prompt="Add @alex to this scene", reference_paths=[str(scene)], steps=1)
+    assert "face reference images 2" in job["payload"]["resolved_prompt"]
+    assert "body reference images 3" in job["payload"]["resolved_prompt"]
+    assert job["payload"]["avatar_bindings"][0]["reference_roles"] == ["face", "body"]
+    assert wait_for(client, job["id"])["status"] == "done"
+
+
+def test_existing_avatar_database_migrates_without_losing_references(tmp_path):
+    import sqlite3
+    import threading
+    import json
+    from refract_backend.avatars import AvatarStore
+    source = make_reference(tmp_path)
+    with sqlite3.connect(tmp_path / "legacy.db") as db:
+        db.row_factory = sqlite3.Row
+        db.execute("""CREATE TABLE avatars (id TEXT PRIMARY KEY, name TEXT NOT NULL,
+            handle TEXT NOT NULL UNIQUE, description TEXT NOT NULL,
+            references_json TEXT NOT NULL, updated_at REAL NOT NULL)""")
+        db.execute("INSERT INTO avatars VALUES (?, ?, ?, ?, ?, ?)",
+                   ("a1", "Alex", "alex", "", json.dumps([str(source)]), 1))
+        db.commit()
+        store = AvatarStore(db, tmp_path / "avatars", threading.RLock())
+        loaded = store.list()[0]
+        assert loaded["references"] == [str(source)]
+        assert loaded["reference_roles"] == ["reference"]
+        updated = store.save({**loaded, "reference_roles": ["face"]}, "a1")
+        assert updated["reference_roles"] == ["face"]
 
 
 def test_tagged_generation_preserves_prompt_and_binds_scene_and_subject(client, tmp_path):

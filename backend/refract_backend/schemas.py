@@ -50,10 +50,10 @@ class GenerateRequest(BaseModel):
     seeds: list[int] | None = None
     quantize: int | None = 4
     use_kv_cache: bool = True
-    low_ram: bool = False
+    low_ram: bool = False  # Legacy saved-session field; weights now always stay resident.
     vae_tiling: bool = False
     mlx_cache_limit_gb: float | None = Field(default=None, gt=0)
-    preview_interval: int = Field(default=5, ge=0, le=40)
+    preview_interval: int = Field(default=1, ge=0, le=40)
     model_source: ModelSourceId = "mlx-q4"
     model_path: str | None = None
     #: Which project this run belongs to, so the Library can be filtered to it later.

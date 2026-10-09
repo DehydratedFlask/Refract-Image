@@ -1,3 +1,3 @@
 """Refract Image backend: local MLX/Metal image generation service for macOS."""
 
-__version__ = "0.0.2"
+__version__ = "0.0.3"

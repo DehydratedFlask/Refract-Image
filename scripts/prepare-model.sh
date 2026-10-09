@@ -11,9 +11,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$ROOT/.runtime/bin/python"
-[[ -x "$PY" ]] || { echo "Run ./scripts/bootstrap.sh first." >&2; exit 1; }
-
 # shellcheck source=scripts/_env.sh   (weights go to the checkout's volume, not the SSD-less one)
 source "$ROOT/scripts/_env.sh"
+[[ -x "$PY" ]] || { echo "Run ./scripts/bootstrap.sh first." >&2; exit 1; }
 
 exec "$PY" -m refract_backend.tools.prepare "$@"

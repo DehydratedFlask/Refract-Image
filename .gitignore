@@ -1,3 +1,10 @@
+# The application tree holds the runnable app, runtime and model data; it is local only.
+/application/
+/node_modules
+/.runtime
+/.refract
+/.cache
+
 # Application data: downloaded model weights, caches, jobs, references and outputs.
 .refract/
 

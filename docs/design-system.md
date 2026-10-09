@@ -1,148 +1,104 @@
-# Design system
+# Native desktop design
 
-Refract Image is a native macOS app, not a web page in a window. This document records its
-interface rules, where each one is implemented, and what was checked visually. Platform
-decisions follow Apple's macOS Human Interface Guidelines, with product-specific exceptions
-called out in [Deliberate deviations](#deliberate-deviations).
+Refract Image's desktop interface is SwiftUI hosted by AppKit. The desktop executable does not
+compile the legacy [Browser.swift](../native/Sources/Browser.swift) or
+[Bridge.swift](../native/Sources/Bridge.swift), does not render React, and does not start a UI server.
+The optional browser interface is retained separately under `app/`.
 
-## The layout formula
+## Workspace structure
 
-```
-┌──────────────────────────────────────────────────────────┐
-│ ● ● ●   Refract Image   [Compose|Library|Models]   …   ⚙   ⌘⏎ │  ← 50px, draggable
-├───────────────┬──────────────────────────────────────────┤
-│               │                                          │
-│   Sidebar     │              Content                     │
-│   240px       │        (compose / library / models)      │
-│   vibrancy    │                                          │
-│               │                                          │
-└───────────────┴──────────────────────────────────────────┘
-```
+- A 236-point material sidebar holds the five native destinations: Compose, Library, Projects,
+  Avatars, and Models. Project and session navigation scroll independently of the machine panel.
+- Machine status is a non-scrolling footer: MLX peak, installed memory, free disk, elapsed/last run,
+  engine version, and chip. The active generation's phase and progress also remain visible here
+  when switching screens.
+- Compose uses a native resizable split view. Reference images, prompt, advanced settings, and
+  queue occupy the form column; the Generate button and output destination are anchored outside
+  its scroll view. The preview/comparison canvas receives the remaining space.
+- The native title bar owns window dragging and traffic lights. No fake traffic-light spacers,
+  HTML drag regions, or duplicate top-level navigation are needed.
+- Default window content is 1280×850; minimum window size is 980×620. The minimum preserves
+  the sidebar, controls, and a useful preview rather than collapsing status into hidden menus.
 
-- The window asks macOS for `.fullSizeContentView` with `titlebarAppearsTransparent` and
-  `titleVisibility = .hidden` ([Browser.swift](../native/Sources/Browser.swift)), so the real
-  traffic lights are drawn over the top bar and the content runs underneath them. A 68px
-  `.traffic-lights` spacer ([global.css](../app/src/styles/global.css)) keeps the title clear of
-  them — the buttons are integrated into the bar rather than floated above the UI.
-- The whole top bar carries `data-window-drag`, and the title, segmented control and spacer
-  repeat it, so the top ~50px moves the window. The page cannot move a window it does not own, so
-  a mousedown inside one of those elements calls `start_window_drag` and the app runs
-  `window.performDrag` with the event that is still being tracked
-  ([ipc.ts](../app/src/lib/ipc.ts), [Browser.swift](../native/Sources/Browser.swift)).
-- Navigation lives in the sidebar (240px) as labelled groups — `COMPOSE`, `LIBRARY`,
-  `MODELS` — with the same three destinations mirrored in the top bar's segmented control for
-  a one-click jump from any view. Row height is 30px, active rows use a soft fill rather
-  than a saturated block (`--surface-hover` / `--surface-active`).
-- The main content area is **opaque** (`--bg-primary`); blur stays in window chrome and panels.
+Implemented in [NativeViews.swift](../native/Sources/NativeViews.swift) and
+[NativeWindow.swift](../native/Sources/NativeWindow.swift).
 
-## Checklist
+## Live progress
 
-| Interface rule | Implementation |
-| --- | --- |
-| Top bar for global actions, sidebar for navigation, content in the centre | [TopBar.tsx](../app/src/components/TopBar.tsx), [Sidebar.tsx](../app/src/components/Sidebar.tsx), view switch in [App.tsx](../app/src/App.tsx) |
-| Traffic lights integrated into the UI | Overlay title bar + reserved 68px spacer; never overlapping controls |
-| Top ~50px draggable | `data-window-drag` on the header and its non-interactive children |
-| Empty states, progressive disclosure | `EmptyState` in [ui.tsx](../app/src/components/ui.tsx); the compose canvas only shows the compare panel once there is something to compare; the library's filter row appears only when items exist |
-| Keyboard shortcut for every primary action, with visible hints | See [Shortcuts](#shortcuts); hints render as `<kbd>` chips next to the controls, and `⌘/` opens the cheat sheet |
-| Light **and** dark, designed separately, never inverted | [tokens.css](../app/src/styles/tokens.css) — light keeps surfaces close, dark spreads three greys and denser shadows |
-| Search prominent and accessible | Search field appears in the top bar in Library view and focuses on `⌘F`; filters the grid live |
-| Drag and drop in and out | Files dropped anywhere in the window are added as references; results and library items are draggable out to Finder |
-| Micro-animation on every state change | Shared `--duration-*` / `--ease-*` tokens applied to hover, selection, panels, toasts |
-| Brief onboarding that teaches by doing | [OnboardingSheet](../app/src/components/Sheets.tsx) offers the first download and names the shortcut that dismisses it |
+- `TimelineView` refreshes canvas timing every 250 ms and sidebar timing every second. Elapsed
+  time uses the backend's actual job start timestamp, including model loading and encoding.
+- Remaining denoising time counts down from the latest measured ETA, then recalibrates after
+  each completed step. Before timing samples exist it says "Estimating"; when a step overruns
+  the estimate it says "Updating estimate" rather than pretending the job has finished.
+- Progress percentage represents actual completed steps. It is not artificially interpolated.
+- Previews decode after every completed step by default. This is live *per-step* feedback, not
+  a fabricated image between steps. Qwen and FLUX use their own installed latent unpackers and
+  VAE paths; tiling follows the generation's decode policy.
+- Completed-step progress is published before preview decoding, and ETA measurements include
+  preview decode work. Three recent preview files are retained to accommodate lagging readers;
+  job scratch space is removed at completion.
+- The native image view loads file data off the main thread and retains the previous image
+  until its replacement arrives. Preview files are versioned by step, avoiding stale cache hits.
 
-## Colour, type and depth
+State, authenticated streaming, reconnect/poll fallback, and durable sessions live in
+[NativeStore.swift](../native/Sources/NativeStore.swift). Model hooks live in
+[callbacks.py](../backend/refract_backend/callbacks.py).
 
-Three visual rules shape the token file:
+## Visual language
 
-1. **Light and dark are separate palettes.** Light keeps its four surfaces within a few
-   percent of each other (`#ffffff` → `#f5f5f7` → `#e8e8ed`); dark pulls them apart
-   (`#1c1c1e` → `#2c2c2e` → `#3a3a3c`) and never uses pure black. The accent also changes:
-   `#007aff` in light, the brighter `#0a84ff` in dark.
-2. **Depth comes from layered shadows**, and every shadow starts with the
-   `0 0 0 0.5px` edge that gives macOS its hairline definition — there are no thick borders
-   anywhere in the app.
-3. **Vibrancy is reserved for chrome.** The sidebar, top bar and floating panels use
-   `backdrop-filter: saturate(180%) blur(20px)` over a ~72% translucent fill; content,
-   inputs and images stay solid.
+Use system typography, semantic foreground colors, native blue tint, native controls, material
+chrome, and opaque image canvases. macOS supplies light/dark control appearances and accessibility
+behavior. Primary actions use prominent native buttons; secondary actions remain quiet. Spacing
+is generous where prompts and images need attention; metadata uses small monospaced digits.
 
-Type is the macOS scale, 13px body and up, in the `-apple-system` stack, with `SF Mono` for
-paths and seeds. Spacing is on the 8px grid (`--space-1` … `--space-10`), and radii stay
-consistent: 10px window, 12px panel, 8px card, 6px button/input, 4px tag.
+Advanced generation settings are progressively disclosed. Empty states explain the next useful
+action instead of showing a blank workspace. Avatars expose reusable @handles and face/body roles.
+Library tiles keep readable captions visible, with native context menus for image actions.
+
+Results offer original aspect-ratio fitting, side-by-side comparison, a draggable wipe plus an
+accessible slider, 2× zoom, Copy, Reveal, Save As, Refine, and Variation. Multiple references and
+outputs can be selected. Image files drag out through native item providers.
+
+## Lifecycle
+
+Closing the last window terminates the app and invokes `Service.stop()`. The native host terminates
+its owned inference process group, waits briefly, then force-stops stragglers. Python establishes
+that group and starts its parent watchdog **before importing MLX**. If the app vanishes, the watchdog
+kills its owned inference/download group even when GPU cancellation cannot unwind.
+
+No UI server is started by the desktop app. Independently launched development services are not
+owned by it and are deliberately left alone.
 
 ## Shortcuts
 
 | Shortcut | Action |
 | --- | --- |
-| `⌘⏎` | Generate |
-| `Esc` | Cancel the running job / dismiss a sheet |
-| `⌘N` | New generation |
-| `⌘F` | Focus library search |
-| `⌘1` / `⌘2` / `⌘3` | Compose / Library / Models |
-| `⌘,` | Settings |
-| `⌘/` | Shortcut cheat sheet |
-| `⌘⇧R` | Reveal the output in Finder |
-| `⌘⇧S` | Save the result as… |
+| ⌘Return | Generate / add to queue |
+| Escape / ⌘. | Cancel current generation |
+| ⌘N | New generation session |
+| ⌘P | New project |
+| ⌘J | Cycle projects |
+| ⌘1 / ⌘2 / ⌘3 / ⌘4 | Compose / Library / Projects / Models |
+| ⌘, | Settings |
+| ⌘/ | Shortcut sheet |
+| ⇧⌘S | Save result as |
+| ⇧⌘R | Reveal result in Finder |
 
-`⌘S`, `⌘A` and the other editing keys are left to the webview so text fields behave normally.
+Standard editing, undo, selection, and clipboard shortcuts use the native responder chain.
 
-## Interaction details
+## Verification
 
-- **Compare, not just display.** The result sits beside the reference images
-  ([CompareView.tsx](../app/src/features/compare/CompareView.tsx)) with a *Side by side* /
-  *Wipe* toggle: side by side pairs each reference with the output, and wipe overlays them so
-  a drag of the divider reveals how much of the reference survived. Zoom and pan are
-  pointer-driven, so the same gesture works on a trackpad.
-- **Optimistic feedback.** Saving, revealing and favouriting act immediately and confirm with
-  a toast that slides up and auto-dismisses; the same pattern shows job progress so a long
-  run never looks frozen.
-- **Progressive disclosure.** Advanced sampler settings (steps, size, guidance, seed) stay
-  behind a disclosure; the reference strip explains itself only when empty.
-- **The destination is named before the run.** The compose bar shows the folder the image
-  will be written to, with *Choose…* and *Default* beside it, because a five-minute run that
-  ends up somewhere unexpected is a five-minute run wasted. That one setting drives the
-  Library footer and both *Open outputs folder* buttons, so no part of the app can disagree
-  about where the images are. It is deliberately not repeated in the Advanced panel.
-- **Transparency about the runner.** When the mock runner is active the app says so in the
-  banner *and* the top bar, rather than presenting placeholders as results.
+The native `--mock --smoke` workflow checks actual hosted SwiftUI navigation through accessibility
+press actions, streamed image readability, ticking timing between steps, durable session reopening,
+clipboard image support, queue cancellation, and machine-panel bounds at two window sizes.
+Screenshots are captured from the actual NSHostingController view when `REFRACT_QA_DIR` is supplied.
+They are not web mockups. A separate [lifecycle test](../scripts/test-native-lifecycle.py) closes a
+busy native window and kills a native app process, then asserts all its backend processes exit.
 
-## Deliberate deviations
+[Preview regression tests](../backend/tests/test_live_previews.py) exercise both families' real
+latent layouts without downloading weights, the correct VAE calls, bounded frame retention,
+preview disabling, cancellation, decode-inclusive ETA, and clearing stale ETA after denoising.
 
-- **The sidebar is always visible.** With three destinations plus the library filters it carries
-  real state; the 1080px minimum window width keeps it from crowding the canvas.
-- **No `⌘S` quick-save.** A generation writes its output to disk automatically, so there is
-  nothing to save. `⌘⇧S` exports a copy, which is the only case that needs a dialog.
-- **Sheets instead of popovers.** Settings, the cheat sheet and onboarding are centred sheets
-  ([Sheets.tsx](../app/src/components/Sheets.tsx)) because they are read at length; popovers
-  are reserved for transient menus.
-
-## Reviewing the interface without the model
-
-The built UI is bundled into one self-contained file, which is what the screenshots in the QA
-pass are taken from:
-
-```bash
-cd app && npm run build
-../.runtime/bin/python scripts/make-preview.py   # writes assets/ui-preview.html
-```
-
-Opening [`assets/ui-preview.html`](../assets/ui-preview.html) serves the whole interface from
-the placeholder dataset (`mock: true`) — no Python service, no weights — which is how the
-light and dark, empty and populated states of Compose, Library and Models were checked side by
-side. The in-app **Settings → Appearance** switch does the same thing live, and persists the
-choice.
-
-## QA pass
-
-Every screen was reviewed in both appearances at 1280×860 and at the 1080px minimum window
-width. The pass caught four things, all fixed rather than papered over:
-
-| Symptom | Cause | Fix |
-| --- | --- | --- |
-| The favourite star on a Library tile was an invisible white square in dark mode | the tile reused `className="remove"`, which is only styled inside `.thumb` | gave the toggle its own `.grid-card .fav` chip, gold when on, with a `--favorite` token per appearance |
-| The top bar wrapped to two lines ("mock / runner") and, once fixed, clipped the badge | the status readout had no white-space or shrink rules | added `.topbar-status`: only the model name shrinks and ellipsises, and below 1200px the name and disk figure step aside for the search field |
-| The compose bar promised "≈13 GB peak RAM" for a run whose own comment records ~15.6 GB | the estimator's base was 7.0 GB, unrelated to the measurement it cited | re-anchored it on the measured 512px run, so the default 1024×1024 now reads ≈19 GB |
-| The demo's "Prepared local model" pointed at `~/Library/Application Support/Refract/...` | stale placeholder data, and its size contradicted its own installed entry | pointed it at the resolved external root and gave the demo coherent sizes, durations and peaks |
-| The output folder could be chosen but only Settings knew: *Open outputs folder* and the Library footer still named the default | three separate copies of one setting, one of them stale | one destination control on the compose bar and in Settings; the Library and sidebar follow it, and the Advanced panel's duplicate was removed |
-
-The release app embeds its interface and first-run setup payload, then stores its runtime and
-model data separately under the locations selected in the setup window.
+**Verification boundary:** mock/native integration and tensor-layout tests do not prove real
+inference quality or performance for every installed model. A full production Qwen and FLUX run
+is still needed to measure the extra cost of per-step VAE previews on the target Mac.

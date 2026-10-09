@@ -46,7 +46,7 @@ export function TopBar() {
       </div>
 
       <Segmented<View>
-        value={view}
+        value={view === "avatars" ? "library" : view}
         onChange={(next) => setView(next)}
         options={[
           { value: "compose", label: "Compose" },

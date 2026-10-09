@@ -27,6 +27,9 @@ class AvatarStore:
                 id TEXT PRIMARY KEY, name TEXT NOT NULL, handle TEXT NOT NULL UNIQUE,
                 description TEXT NOT NULL, references_json TEXT NOT NULL, updated_at REAL NOT NULL
             )""")
+            columns = {row[1] for row in self.db.execute("PRAGMA table_info(avatars)")}
+            if "reference_roles_json" not in columns:
+                self.db.execute("ALTER TABLE avatars ADD COLUMN reference_roles_json TEXT NOT NULL DEFAULT '[]'")
             self.db.commit()
 
     def list(self) -> list[dict]:
@@ -37,6 +40,8 @@ class AvatarStore:
     def _decode(self, row) -> dict:
         value = dict(row)
         value["references"] = json.loads(value.pop("references_json"))
+        roles = json.loads(value.pop("reference_roles_json"))
+        value["reference_roles"] = roles if len(roles) == len(value["references"]) else ["reference"] * len(value["references"])
         return value
 
     def save(self, body: dict, avatar_id: str | None = None) -> dict:
@@ -44,6 +49,7 @@ class AvatarStore:
         handle = body.get("handle", "")
         description = body.get("description", "")
         references = body.get("references", [])
+        roles = body.get("reference_roles", ["reference"] * len(references) if isinstance(references, list) else [])
         if not isinstance(name, str) or not 1 <= len(name.strip()) <= 60:
             raise AvatarError("Give the avatar a name of 1–60 characters")
         if not isinstance(handle, str) or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,39}", handle):
@@ -52,6 +58,10 @@ class AvatarStore:
             raise AvatarError("Keep the description under 500 characters")
         if not isinstance(references, list) or not 1 <= len(references) <= MAX_REFERENCES:
             raise AvatarError("Add 1–10 reference images for this avatar")
+        if not all(isinstance(path, str) for path in references):
+            raise AvatarError("Reference paths must be strings")
+        if not isinstance(roles, list) or len(roles) != len(references) or any(role not in ("face", "body", "reference") for role in roles):
+            raise AvatarError("Label each image as a face, body or additional reference")
         with self.lock:
             if avatar_id and not self.db.execute("SELECT id FROM avatars WHERE id=?", (avatar_id,)).fetchone():
                 raise AvatarError("avatar not found")
@@ -62,20 +72,26 @@ class AvatarStore:
             # Stage a complete new image set before replacing an existing profile.
             folder = self.root / avatar_id / uuid.uuid4().hex[:12]
             saved = []
+            saved_roles = []
+            seen = set()
             try:
                 folder.mkdir(parents=True, exist_ok=True)
-                for index, raw in enumerate(dict.fromkeys(references)):
-                    if not isinstance(raw, str):
-                        raise AvatarError("Reference paths must be strings")
+                for raw, role in zip(references, roles):
+                    if raw in seen:
+                        continue
+                    seen.add(raw)
                     source = Path(raw).expanduser().resolve()
                     with Image.open(source) as image:
                         image.verify()
-                    target = folder / f"ref-{index + 1}{source.suffix.lower()}"
+                    target = folder / f"ref-{len(saved) + 1}{source.suffix.lower()}"
                     shutil.copy2(source, target)
                     saved.append(str(target))
+                    saved_roles.append(role)
                 now = time.time()
-                self.db.execute("INSERT OR REPLACE INTO avatars VALUES (?, ?, ?, ?, ?, ?)",
-                                (avatar_id, name.strip(), handle.lower(), description.strip(), json.dumps(saved), now))
+                self.db.execute("""INSERT OR REPLACE INTO avatars
+                    (id, name, handle, description, references_json, updated_at, reference_roles_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (avatar_id, name.strip(), handle.lower(), description.strip(), json.dumps(saved), now, json.dumps(saved_roles)))
                 self.db.commit()
             except Exception as exc:
                 shutil.rmtree(folder, ignore_errors=True)
@@ -87,7 +103,7 @@ class AvatarStore:
                 if old != folder:
                     shutil.rmtree(old, ignore_errors=True)
             return {"id": avatar_id, "name": name.strip(), "handle": handle.lower(),
-                    "description": description.strip(), "references": saved, "updated_at": now}
+                    "description": description.strip(), "references": saved, "reference_roles": saved_roles, "updated_at": now}
 
     def delete(self, avatar_id: str) -> None:
         with self.lock:
@@ -116,10 +132,15 @@ class AvatarStore:
                             references.append(path)
                         indices.append(references.index(path) + 1)
                     bindings[handle] = {"id": avatar["id"], "name": avatar["name"],
-                                        "handle": handle, "description": avatar["description"], "images": indices}
+                                        "handle": handle, "description": avatar["description"], "images": indices,
+                                        "reference_roles": avatar["reference_roles"]}
                 entry = bindings[handle]
                 images = ", ".join(str(index) for index in entry["images"])
                 detail = f"; {entry['description']}" if entry["description"] else ""
+                for role in ("face", "body"):
+                    role_images = [str(index) for index, label in zip(entry["images"], entry["reference_roles"]) if label == role]
+                    if role_images:
+                        detail += f"; {role} reference images {', '.join(role_images)}"
                 return f"{entry['name']} (the subject in reference images {images}{detail})"
 
             resolved = MENTION.sub(replace, request.prompt)

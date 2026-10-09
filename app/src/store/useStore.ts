@@ -20,10 +20,11 @@ import {
   type ValidationReport,
 } from "../lib/api";
 import { baseName, dirName } from "../lib/format";
+import { DEMO_ENABLED } from "../lib/demo";
 import { keepAwake, notifyFinished } from "../lib/ipc";
 import { appInfo, hasNativeHost } from "../lib/ipc";
 
-export type View = "compose" | "library" | "projects" | "models";
+export type View = "compose" | "library" | "avatars" | "projects" | "models";
 
 /** What a refinement is being made from, so Compose can say so while you write the prompt. */
 export interface RefineSource {
@@ -64,7 +65,6 @@ export type Tone = "info" | "success" | "error";
 export interface Settings {
   modelSource: string;
   outputDir: string | null;
-  lowRam: boolean;
   vaeTiling: boolean;
   previewInterval: number;
   saveMetadata: boolean;
@@ -176,7 +176,6 @@ const MAX_REFERENCES = 10;
 const DEFAULT_SETTINGS: Settings = {
   modelSource: "mlx-q4",
   outputDir: null,
-  lowRam: false,
   vaeTiling: false,
   previewInterval: 5,
   saveMetadata: true,
@@ -378,7 +377,7 @@ export const useStore = create<Store>()(
         for (const job of get().jobs.filter((job) => job.kind === "generate" && isPending(job))) {
           get().trackGeneration(job);
         }
-        const { sources, health, system } = get();
+        const { sources, health } = get();
         const usable = sources.find((source) => source.id === "mlx-q4");
         const anythingReady = sources.some((source) => source.available);
         // The model the native setup window recorded, if there is one. It decides both which
@@ -394,7 +393,7 @@ export const useStore = create<Store>()(
             // The chosen model wins over the stored default, but only on a machine that was
             // actually asked — otherwise a terminal install's default is left alone.
             model_source: chosen ?? get().settings.modelSource,
-            low_ram: get().settings.lowRam || (system ? system.total_ram_gb > 0 && system.total_ram_gb < 32 : false),
+            low_ram: false,
             vae_tiling: get().settings.vaeTiling,
             preview_interval: get().settings.previewInterval,
             save_metadata: get().settings.saveMetadata,
@@ -656,7 +655,6 @@ export const useStore = create<Store>()(
           const settings = { ...state.settings, ...patch };
           const params: GenerateParams = { ...state.params };
           if (patch.modelSource !== undefined) params.model_source = patch.modelSource;
-          if (patch.lowRam !== undefined) params.low_ram = patch.lowRam;
           if (patch.vaeTiling !== undefined) params.vae_tiling = patch.vaeTiling;
           if (patch.previewInterval !== undefined) params.preview_interval = patch.previewInterval;
           if (patch.saveMetadata !== undefined) params.save_metadata = patch.saveMetadata;
@@ -711,10 +709,18 @@ export const useStore = create<Store>()(
         }
         set({ submitting: true });
         try {
+          // Standalone generations also need a durable session in the sidebar.
+          if (!DEMO_ENABLED && !get().activeProjectId) {
+            const view = get().view;
+            if (!await get().createProject(params.prompt.trim().slice(0, 60))) return;
+            set({ view });
+            params = { ...params, project_id: get().params.project_id,
+              project_session_id: get().params.project_session_id };
+          }
           // Save references before submission, then use the project's managed copies.
           cancelAutosave();
           if (!await get().saveActiveProject()) return;
-          params = { ...params, reference_paths: [...get().params.reference_paths] };
+          params = { ...params, low_ram: false, reference_paths: [...get().params.reference_paths] };
           if (params.guidance <= 1) params.negative_prompt = null;
           const job = await api.createJob("generate", params as unknown as Record<string, unknown>);
           get().trackGeneration(job);

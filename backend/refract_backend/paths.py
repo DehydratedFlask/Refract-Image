@@ -61,6 +61,23 @@ def repo_root() -> Path | None:
     return None
 
 
+def workspace_root() -> Path | None:
+    """Application runtime/data root, separate from the optional source-only copy."""
+    raw = os.environ.get("REFRACT_WORKSPACE")
+    if raw:
+        return _expand(raw)
+    root = repo_root()
+    if root is None:
+        return None
+    marker = root / ".refract-workspace"
+    if marker.is_file():
+        relative = marker.read_text().strip()
+        if not relative:
+            raise ValueError(".refract-workspace must name the application workspace")
+        return (root / relative).resolve()
+    return root
+
+
 def _existing_ancestor(path: Path) -> Path:
     probe = path
     while not probe.exists() and probe.parent != probe:
@@ -102,7 +119,7 @@ def data_root() -> Path:
     explicit = os.environ.get("REFRACT_ROOT") or os.environ.get("REFRACT_DATA_DIR")
     if explicit:
         return _expand(explicit)
-    root = repo_root()
+    root = workspace_root()
     if root is not None and not is_on_internal_disk(root):
         return root / DATA_DIR_NAME
     return _default_data_dir()

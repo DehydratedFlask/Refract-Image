@@ -82,15 +82,9 @@ final class Once<T> {
     }
 }
 
-/// Owns the two child processes the window depends on: the inference service, and the static
-/// server that hands the built UI to the web view over loopback.
-///
-/// Their lifecycle is the app's. They are started at launch, given a token and a
-/// `REFRACT_PARENT_PID` to watch, and killed on quit; if the app is killed outright instead,
-/// both children notice their parent has vanished and exit on their own, so a crash cannot
-/// leave tens of gigabytes of weights resident. The UI is served over loopback rather than read
-/// with `loadFileURL` because a `file://` page is not allowed to call the API cross-origin
-/// without a private WebKit preference — same-origin loopback needs no exceptions at all.
+/// Owns the inference process and its worker group. The SwiftUI window needs no UI
+/// server. The backend watches the app's pid, so even an unexpected app death cannot
+/// leave the image engine holding model weights.
 final class Service {
     private(set) var backend: BackendInfo?
     private(set) var uiBase: URL?
@@ -119,6 +113,21 @@ final class Service {
     }
 
     // MARK: - lifecycle
+
+    /// The SwiftUI app needs only inference: no static server, JavaScript bridge, or web view.
+    func startNative(completion: @escaping (Outcome<BackendInfo>) -> Void) {
+        guard HostPaths.python() != nil else { completion(.failure(HostPaths.runtimeHint())); return }
+        stopping = false
+        openLogs()
+        startBackend { [weak self] result in
+            if case .success(let info) = result {
+                self?.backend = info
+                self?.lastError = nil
+                self?.onEvent?("backend-ready", info.dictionary)
+            }
+            completion(result)
+        }
+    }
 
     /// Start the children, then hand back the address the window should load.
     func start(completion: @escaping (Outcome<URL>) -> Void) {
@@ -294,7 +303,9 @@ final class Service {
         // Cold starts on an external volume have been known to take minutes; a service that is
         // merely slow should not be killed, so the deadline only applies to the announcement.
         io.asyncAfter(deadline: .now() + 120) {
-            delivery.deliver(.failure("The service did not report readiness within 120s. See \(self.backendLogURL.path)"))
+            DispatchQueue.main.async {
+                delivery.deliver(.failure("The service did not report readiness within 120s. See \(self.backendLogURL.path)"))
+            }
         }
     }
 
@@ -383,6 +394,7 @@ final class Service {
             .joined(separator: ":")
         inherited["PATH"] = path
         inherited["PYTHONUNBUFFERED"] = "1"
+        inherited["PYTHONDONTWRITEBYTECODE"] = "1"
         for (key, value) in environment {
             inherited[key] = value
         }
@@ -395,14 +407,25 @@ final class Service {
 
     /// Send SIGTERM, wait briefly, then insist.
     private static func terminate(_ process: Process?) {
-        guard let process, process.isRunning else { return }
+        guard let process else { return }
         let pid = process.processIdentifier
-        kill(pid, SIGTERM)
+        guard pid > 0 else { return }
+        // Python establishes its own session before importing MLX. Only signal a
+        // process group when it belongs to this child, never the app's inherited group.
+        let ownsGroup = getpgid(pid) == pid
+        guard process.isRunning || ownsGroup else { return }
+        let target = ownsGroup ? -pid : pid
+        kill(target, SIGTERM)
         for _ in 0..<30 {
-            if !process.isRunning { return }
+            let alive = ownsGroup ? kill(target, 0) == 0 : process.isRunning
+            if !alive { return }
             usleep(50_000)
         }
-        kill(pid, SIGKILL)
+        kill(target, SIGKILL)
+        for _ in 0..<20 {
+            if !process.isRunning { break }
+            usleep(25_000)
+        }
     }
 
     private func stream(_ pipe: Pipe?, to handle: FileHandle?, onLine: @escaping (String) -> Void) {

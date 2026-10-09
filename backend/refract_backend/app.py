@@ -336,6 +336,7 @@ def create_app(token: str, force_mock: bool = False) -> FastAPI:
         favorites: bool = False,
         model_source: str | None = None,
         project_id: str | None = None,
+        project_session_id: str | None = None,
         limit: int = 500,
         offset: int = 0,
     ) -> dict[str, Any]:
@@ -346,6 +347,7 @@ def create_app(token: str, force_mock: bool = False) -> FastAPI:
             favorites_only=favorites,
             model_source=model_source,
             project_id=project_id,
+            project_session_id=project_session_id,
         )
         return {"items": items, "count": len(items)}
 

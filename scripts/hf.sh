@@ -17,7 +17,7 @@ source "$ROOT/scripts/_env.sh"
 
 HF_CLI="${HF_CLI:-}"
 if [[ -z "$HF_CLI" ]]; then
-  for candidate in "$ROOT/.runtime/bin/hf" "$(command -v hf 2>/dev/null || true)" "$(command -v huggingface-cli 2>/dev/null || true)"; do
+  for candidate in "$WORKSPACE/.runtime/bin/hf" "$(command -v hf 2>/dev/null || true)" "$(command -v huggingface-cli 2>/dev/null || true)"; do
     if [[ -n "$candidate" && -x "$candidate" ]]; then HF_CLI="$candidate"; break; fi
   done
 fi

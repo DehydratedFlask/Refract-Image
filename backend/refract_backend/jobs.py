@@ -73,7 +73,8 @@ class Job:
     def emit(self, event: dict[str, Any]) -> None:
         """Record an event and fold its fields into the job's live state."""
         self._seq += 1
-        payload = {**event, "seq": self._seq, "at": time.time(), "status": self.status, "job_id": self.id}
+        payload = {**event, "seq": self._seq, "at": time.time(), "status": self.status,
+                   "job_id": self.id, "started_at": self.started_at}
         self.events.append(payload)
         if len(self.events) > 2000:
             del self.events[:500]
@@ -95,7 +96,7 @@ class Job:
             "height",
             "outputs",
         ):
-            if key in event and event[key] is not None:
+            if key in event and (event[key] is not None or key == "eta_seconds"):
                 setattr(self, key, event[key])
 
     def to_dict(self, include_events: bool = False) -> dict[str, Any]:
@@ -165,6 +166,11 @@ class JobQueue:
         self._pending.put("__stop__")
         if self._worker:
             self._worker.join(timeout=timeout)
+        # Never release weights underneath a worker still unwinding cancellation.
+        if not self._worker or not self._worker.is_alive():
+            release = getattr(self.runner, "release", None)
+            if release is not None:
+                release()
 
     @property
     def busy(self) -> bool:
@@ -304,10 +310,6 @@ class JobQueue:
             self._condition.notify_all()
 
         try:
-            # Preparation, installation and validation can construct their own pipeline.
-            # Drop all warm generation components before these jobs touch the GPU.
-            if job.kind in ("prepare", "prepare-klein", "install", "validate"):
-                self.runner.release()
             if job.kind == "generate":
                 self._run_generate(job)
             elif job.kind == "download":
@@ -340,10 +342,7 @@ class JobQueue:
                 job.error = f"{type(exc).__name__}: {exc}"
                 job.message = job.error
         finally:
-            if job.kind in ("prepare", "prepare-klein", "install", "validate"):
-                # A failed preparation may have left a partial model on the runner.
-                self.runner.release()
-            elif job.kind == "generate" and job.status != "done":
+            if job.kind == "generate" and job.status != "done":
                 # Error tracebacks have unwound, so their model locals can be collected.
                 sysinfo.clear_cache()
             job.finished_at = time.time()
@@ -373,10 +372,15 @@ class JobQueue:
                     seeds=job.seeds,
                 )
             self._notify()
-            try:
+            # The final event and file load travel independently. Keep the bounded
+            # preview frames briefly so clients can finish reading the last image
+            # before switching to the completed output. Startup also cleans stale jobs.
+            if job.preview_path:
+                cleanup = threading.Timer(5.0, shutil.rmtree, args=(job.job_dir,), kwargs={"ignore_errors": True})
+                cleanup.daemon = True
+                cleanup.start()
+            else:
                 shutil.rmtree(job.job_dir, ignore_errors=True)
-            except OSError:
-                pass
 
     # ---- kind handlers ----------------------------------------------------
     def _run_generate(self, job: Job) -> None:

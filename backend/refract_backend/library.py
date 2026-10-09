@@ -213,6 +213,7 @@ class Library:
         favorites_only: bool = False,
         model_source: str | None = None,
         project_id: str | None = None,
+        project_session_id: str | None = None,
     ) -> list[dict[str, Any]]:
         clauses, args = [], []
         if search:
@@ -226,6 +227,9 @@ class Library:
         if project_id:
             clauses.append("project_id = ?")
             args.append(project_id)
+        if project_session_id:
+            clauses.append("COALESCE(json_extract(params_json, '$.project_session_id'), 's1') = ?")
+            args.append(project_session_id)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         rows = self._conn.execute(
             f"SELECT * FROM generations {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",

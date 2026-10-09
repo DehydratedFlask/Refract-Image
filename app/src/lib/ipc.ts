@@ -74,14 +74,16 @@ export async function pickImages(): Promise<string[]> {
       return [];
     }
   }
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = "image/*";
     input.multiple = true;
+    input.addEventListener("cancel", () => resolve([]), { once: true });
     input.onchange = async () => {
       const files = Array.from(input.files ?? []);
-      resolve(files.length ? await uploadFiles(files) : []);
+      try { resolve(files.length ? await uploadFiles(files) : []); }
+      catch (error) { reject(error); }
     };
     input.click();
   });

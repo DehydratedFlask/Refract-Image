@@ -4,9 +4,8 @@ Everything model-specific lives here. The service keeps one warm model instance 
 loading 4-18 GB of weights per request would dominate latency, so this module owns:
 
 * resolving a *source id* into (weights path, quantisation) for mflux,
-* the memory policy — warm (default: text encoder stays resident, MLX cache is dropped
-  between jobs) versus low-memory (mflux's `MemorySaver` evicts the encoder after each
-  encode and the model is released after the job),
+* the memory policy — weights stay resident until another model starts generating or
+  the application closes; temporary MLX buffers are cleared between jobs,
 * registering a fresh progress/cancel callback per job (callbacks accumulate on a reused
   model otherwise, so each job starts from a clean registry),
 * naming and saving outputs with their metadata sidecar.
@@ -184,7 +183,6 @@ class MfluxRunner:
         self._key: tuple[str | None, int | None, str] | None = None
         self._lifecycle_lock = threading.RLock()
         self._running = False
-        self._selected_model: tuple[str, str | None] | None = None
         self._warm_selection: tuple[str, str | None] | None = None
 
     # ---- model lifecycle --------------------------------------------------
@@ -242,45 +240,26 @@ class MfluxRunner:
         sysinfo.clear_cache()
 
     def select_model(self, source_id: str, model_path: str | None = None) -> dict[str, bool]:
-        """Evict an idle pipeline immediately; an active run releases it on completion."""
+        """Keep the current pipeline until generation requests different weights."""
         selected = (source_id, model_path or None)
         with self._lifecycle_lock:
-            self._selected_model = selected
-            if self._running:
-                return {"unloaded": False, "deferred": selected != self._warm_selection}
-            if self._model is not None and selected != self._warm_selection:
-                self.release()
-                return {"unloaded": True, "deferred": False}
-            return {"unloaded": False, "deferred": False}
+            return {"unloaded": False, "deferred": self._model is not None and selected != self._warm_selection}
 
     # ---- generation -------------------------------------------------------
     def generate(self, request: GenerateRequest, reporter: ReporterFn, cancel_event,
                  job_dir: Path | None = None) -> dict[str, Any]:
-        selection = (request.model_source, request.model_path or None)
         with self._lifecycle_lock:
             if self._running:
                 raise RuntimeError("A generation is already running")
             self._running = True
-            self._warm_selection = selection
-        succeeded = False
         try:
-            result = self._generate(request, reporter, cancel_event, job_dir)
-            succeeded = True
-            return result
+            return self._generate(request, reporter, cancel_event, job_dir)
         finally:
-            # The inner frame's model, encoder, VAE and callback locals are gone before
-            # clearing allocations. Queued jobs retain their own requested settings, but
-            # a model that is no longer selected never stays warm after one finishes.
+            # Cache cleanup frees temporary buffers, keeping the weights ready across
+            # sessions, cancellations and errors. Only build_model swaps the pipeline.
             with self._lifecycle_lock:
                 self._running = False
-                if succeeded:
-                    self._warm_selection = selection
-                if not succeeded or request.low_ram or (
-                    self._selected_model is not None and self._selected_model != selection
-                ):
-                    self.release()
-                else:
-                    sysinfo.clear_cache()
+                sysinfo.clear_cache()
 
     def _generate(
         self,
@@ -290,12 +269,7 @@ class MfluxRunner:
         job_dir: Path | None = None,
     ) -> dict[str, Any]:
         from mflux.callbacks.callback_registry import CallbackRegistry
-        from mflux.callbacks.instances.memory_saver import MemorySaver
         from mflux.models.common.vae.tiling_config import TilingConfig
-        from mflux.models.qwen21.reference.latent_creator.qwen_image21_latent_creator import (
-            QwenImage21LatentCreator,
-        )
-
         # Resolved before anything expensive happens: a folder the user picked can be
         # missing, read-only or a file, and finding that out after a five-minute denoise
         # wastes the run.
@@ -346,27 +320,13 @@ class MfluxRunner:
         else:
             model.tiling_config = None
 
-        if request.low_ram:
-            # Evicts the text encoder after encoding and frees the transformer after the
-            # loop; the model is dropped below so that is safe across jobs.
-            model.callbacks.register(
-                MemorySaver(
-                    model=model,
-                    keep_transformer=True,
-                    cache_limit_bytes=int((request.mlx_cache_limit_gb or 1.0) * 1000**3),
-                    num_seeds=1,
-                )
-            )
-
         progress = ProgressCallback(
             model=model,
             report=reporter,
             cancel_event=cancel_event,
-            # Only Qwen-Image's latent creator can decode its own previews; FLUX.2 uses a
-            # different latent layout, and guessing there would decode garbage or raise.
-            latent_creator=None if resolved.family == "flux2" else QwenImage21LatentCreator,
+            latent_creator=_preview_latent_creator(resolved.family),
             preview_dir=job_dir,
-            preview_interval=request.preview_interval if resolved.family != "flux2" else 0,
+            preview_interval=request.preview_interval,
         )
         model.callbacks.register(progress)
 
@@ -437,10 +397,7 @@ class MfluxRunner:
                 model.callbacks = CallbackRegistry()
             except Exception:
                 pass
-            if request.low_ram:
-                self.release(model)
-            else:
-                sysinfo.clear_cache()
+            sysinfo.clear_cache()
 
         return {
             "outputs": outputs,
@@ -466,6 +423,17 @@ class MfluxRunner:
             counter += 1
         image.save(path=path, export_json_metadata=request.save_metadata)
         return path
+
+
+def _preview_latent_creator(family: str):
+    """Use the installed pipeline's own latent layout for each model family."""
+    if family == "flux2":
+        from mflux.models.flux2.latent_creator.flux2_latent_creator import Flux2LatentCreator
+
+        return Flux2LatentCreator
+    from mflux.models.qwen21.reference.latent_creator.qwen_image21_latent_creator import QwenImage21LatentCreator
+
+    return QwenImage21LatentCreator
 
 
 def _settle_gpu(model: Any, reporter: ReporterFn) -> None:

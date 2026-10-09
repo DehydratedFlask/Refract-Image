@@ -1105,3 +1105,22 @@ textarea:focus-visible {
 .avatar-suggestions { position: absolute; z-index: 10; top: 100%; left: 0; right: 0; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: 8px; box-shadow: 0 8px 24px #0003; overflow: hidden; }
 .avatar-suggestions button { display: flex; justify-content: space-between; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 10px; border: 0; color: var(--text-primary); background: transparent; cursor: pointer; }
 .avatar-suggestions button[aria-selected="true"], .avatar-suggestions button:hover { background: var(--accent-soft); }
+
+.sidebar-project-list { max-height: 132px; overflow-y: auto; }
+.sidebar-sessions { flex-shrink: 0; min-width: 0; }
+.sidebar-session-list { max-height: 210px; overflow-y: auto; }
+.sidebar-session { height: auto; min-height: 50px; flex-direction: column; align-items: stretch; justify-content: center; gap: 3px; padding-block: 7px; }
+.sidebar-session-empty { padding-inline: var(--space-2); margin: 4px 0; }
+.avatar-library-heading, .avatar-library { width: min(100%, 1000px); margin-inline: auto; padding: 20px 24px; }
+.avatar-library-heading h1 { font-size: var(--text-title-1); font-weight: 600; margin: 0 0 6px; }
+.avatar-library-heading p { margin: 0; }
+.avatar-library { padding-top: 0; }
+.avatar-manager-layout { display: grid; grid-template-columns: minmax(220px, 0.8fr) minmax(320px, 1fr); align-items: start; }
+@media (max-width: 960px) { .avatar-manager-layout { grid-template-columns: 1fr; } }
+.avatar-reference-slots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.avatar-reference-slot { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.avatar-reference-picker { display: grid; place-items: center; min-height: 132px; padding: 12px; border: 1px dashed var(--border-strong); border-radius: var(--radius-button); background: var(--bg-elevated); color: var(--text-primary); cursor: pointer; }
+.avatar-reference-picker:hover { background: var(--surface-hover); }
+.avatar-reference-picker:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.avatar-reference-picker:disabled { opacity: 0.5; cursor: default; }
+.avatar-reference-picker .avatar-image { width: 104px; height: 104px; }

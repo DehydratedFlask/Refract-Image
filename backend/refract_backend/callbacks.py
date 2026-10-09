@@ -24,7 +24,7 @@ EventSink = Callable[[dict[str, Any]], None]
 
 
 class ProgressCallback:
-    """Reports denoise progress and decodes cheap periodic previews.
+    """Reports denoise progress and decodes periodic previews.
 
     Implements mflux's BeforeLoop/InLoop/AfterLoop/Interrupt protocol. Every optional
     failure (a preview decode, a memory probe) is swallowed: progress reporting must never
@@ -68,10 +68,16 @@ class ProgressCallback:
         total = int(getattr(config, "num_inference_steps", 0) or 0)
         step = t + 1
         elapsed = time.time() - self.started_at if self.started_at else 0.0
-        per_step = elapsed / step if step else None
-        eta = per_step * (total - step) if per_step is not None else None
 
         from . import sysinfo
+
+        # Publish the completed step immediately; VAE decoding may take seconds.
+        self.report({"phase": "denoise", "step": step, "total_steps": total,
+                     "peak_memory_gb": sysinfo.peak_memory_gb()})
+        preview = self._maybe_preview(step, total, seed, prompt, latents, config, elapsed)
+        elapsed = time.time() - self.started_at if self.started_at else 0.0
+        per_step = elapsed / step if step else None
+        eta = per_step * max(0, total - step) if per_step is not None else None
 
         event: dict[str, Any] = {
             "phase": "denoise",
@@ -79,16 +85,15 @@ class ProgressCallback:
             "total_steps": total,
             "elapsed_seconds": round(elapsed, 2),
             "seconds_per_step": round(per_step, 2) if per_step else None,
-            "eta_seconds": round(eta, 1) if eta else None,
+            "eta_seconds": round(eta, 1) if eta is not None else None,
             "peak_memory_gb": sysinfo.peak_memory_gb(),
         }
-        preview = self._maybe_preview(step, total, seed, prompt, latents, config, elapsed)
         if preview:
             event["preview_path"] = preview
         self.report(event)
 
     def call_after_loop(self, seed: int, prompt: str, latents, config) -> None:
-        self.report({"phase": "decoding", "message": "decoding latents"})
+        self.report({"phase": "decoding", "message": "decoding latents", "eta_seconds": None})
 
     def call_interrupt(self, t: int, seed: int, prompt: str, latents, config, time_steps=None) -> None:
         self.report({"phase": "cancelled", "message": f"interrupted at step {t + 1}"})
@@ -115,9 +120,15 @@ class ProgressCallback:
             vae = self.model.vae
             channels = getattr(vae, "latent_channels", 32)
             if hasattr(vae, "decode_packed_latents") and unpacked.shape[1] > channels:
-                decoded = vae.decode_packed_latents(unpacked)
+                decoded = vae.decode_packed_latents(
+                    unpacked, tiling_config=getattr(self.model, "tiling_config", None)
+                )
             else:
-                decoded = vae.decode(unpacked)
+                from mflux.models.common.vae.vae_util import VAEUtil
+
+                decoded = VAEUtil.decode(
+                    vae, unpacked, tiling_config=getattr(self.model, "tiling_config", None)
+                )
             image = ImageUtil.to_image(
                 decoded_latents=decoded,
                 config=config,
@@ -128,9 +139,10 @@ class ProgressCallback:
             )
             target = self.preview_dir / f"preview_{step:03d}.png"
             image.save(path=target, export_json_metadata=False, overwrite=True)
-            for stale in self.preview_dir.glob("preview_*.png"):
-                if stale.name != target.name:
-                    stale.unlink(missing_ok=True)
+            # Keep a bounded three-frame window so a slow client can finish reading
+            # the preceding image while the next completed step is being published.
+            for stale in sorted(self.preview_dir.glob("preview_*.png"))[:-3]:
+                stale.unlink(missing_ok=True)
             return str(target)
         except Exception as exc:  # pragma: no cover - depends on live model internals
             self.report({"message": f"preview unavailable: {exc}"})

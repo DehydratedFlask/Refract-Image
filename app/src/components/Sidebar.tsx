@@ -20,6 +20,9 @@ export function Sidebar() {
   const activeProjectId = useStore((state) => state.activeProjectId);
   const openProject = useStore((state) => state.openProject);
   const createProject = useStore((state) => state.createProject);
+  const avatars = useStore((state) => state.avatars);
+  const sessions = projects.flatMap((project) => project.sessions.map((session) => ({ project, session })))
+    .sort((a, b) => b.session.updated_at - a.session.updated_at);
 
   // The folder the user picked wins over the service's default, here and in Settings.
   const outputsDir = settings.outputDir ?? system?.outputs_dir ?? "";
@@ -45,7 +48,7 @@ export function Sidebar() {
           </button>
         </div>
         {projects.length ? (
-          projects.map((project) => (
+          <div className="sidebar-project-list">{projects.map((project) => (
             <button
               key={project.id}
               className={`sidebar-row ${project.id === activeProjectId ? "active" : ""}`}
@@ -62,7 +65,7 @@ export function Sidebar() {
               <span className="truncate">{project.name}</span>
               <span className="count">{project.generation_count || ""}</span>
             </button>
-          ))
+          ))}</div>
         ) : (
           <button className="sidebar-row" onClick={() => useStore.setState({ view: "projects", projectBrowserOpen: true })} type="button">
             <span className="glyph" aria-hidden>
@@ -91,7 +94,11 @@ export function Sidebar() {
         <div className="sidebar-section-label">Compose</div>
         <button
           className={`sidebar-row ${view === "compose" ? "active" : ""}`}
-          onClick={() => setView("compose")}
+          onClick={async () => {
+            if (activeProjectId) await useStore.getState().newProjectSession(activeProjectId);
+            else useStore.getState().setParams({ prompt: "", reference_paths: [], seed: null });
+            setView("compose");
+          }}
           type="button"
         >
           <span className="glyph" aria-hidden>
@@ -115,6 +122,15 @@ export function Sidebar() {
 
       <div className="col" style={{ gap: 2 }}>
         <div className="sidebar-section-label">Library</div>
+        <button className={`sidebar-row ${view === "avatars" ? "active" : ""}`}
+          onClick={() => { setView("avatars"); void useStore.getState().refreshAvatars(); }} type="button">
+          <span className="glyph" aria-hidden>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+              <circle cx="12" cy="8" r="4" /><path d="M4 21v-2a8 8 0 0 1 16 0v2" />
+            </svg>
+          </span>
+          Avatars<span className="count">{avatars.length}</span>
+        </button>
         <button
           className={`sidebar-row ${view === "library" && !favoritesOnly ? "active" : ""}`}
           onClick={() => {
@@ -183,6 +199,25 @@ export function Sidebar() {
       </div>
 
       <div className="grow" />
+
+      <section className="sidebar-sessions" aria-label="Past sessions">
+        <div className="sidebar-section-label">Past sessions</div>
+        <div className="sidebar-session-list">
+          {sessions.map(({ project, session }) => {
+            const title = session.session.prompt?.trim() || session.name;
+            const selected = params.project_id === project.id && params.project_session_id === session.id;
+            return <button key={`${project.id}/${session.id}`} type="button"
+              className={`sidebar-row sidebar-session ${selected ? "active" : ""}`}
+              aria-current={selected ? "true" : undefined}
+              title={`${title}\n${project.name} · ${new Date(session.updated_at * 1000).toLocaleString()}`}
+              onClick={async () => { await openProject(project.id, session.id); setView("compose"); }}>
+              <span className="truncate">{title}</span>
+              <span className="caption muted truncate">{project.name} · {new Date(session.updated_at * 1000).toLocaleDateString()}</span>
+            </button>;
+          })}
+          {!sessions.length ? <p className="caption muted sidebar-session-empty">Your saved sessions will appear here.</p> : null}
+        </div>
+      </section>
 
       <div className="col" style={{ gap: 6, padding: "0 8px" }}>
         <div className="divider" />

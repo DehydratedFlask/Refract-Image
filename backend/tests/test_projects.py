@@ -314,3 +314,18 @@ def test_generation_remembers_its_project_session(client):
     assert job["payload"]["project_session_id"] == session_id
     item = client.get(f"/api/library?project_id={project['id']}").json()["items"][0]
     assert item["params"]["project_session_id"] == session_id
+
+
+def test_library_session_filter_includes_legacy_and_excludes_other_sessions(client):
+    project = client.post("/api/projects", json={"name": "History"}).json()
+    other = client.post(f"/api/projects/{project['id']}/sessions").json()["active_session_id"]
+    for prompt, session_id in [("legacy", None), ("first", "s1"), ("other", other)]:
+        payload = {"prompt": prompt, "steps": 1, "project_id": project["id"]}
+        if session_id is not None:
+            payload["project_session_id"] = session_id
+        assert client.post("/api/jobs", json={"kind": "generate", "payload": payload}).status_code == 202
+    first = client.get("/api/library", params={"project_id": project["id"], "project_session_id": "s1"}).json()["items"]
+    assert {item["prompt"] for item in first} == {"legacy", "first"}
+    second = client.get("/api/library", params={"project_id": project["id"], "project_session_id": other}).json()["items"]
+    assert [item["prompt"] for item in second] == ["other"]
+    assert client.get("/api/library", params={"project_id": project["id"], "project_session_id": "missing"}).json()["items"] == []

@@ -22,7 +22,10 @@ ReporterFn = Callable[[dict[str, Any]], None]
 
 class MockRunner:
     def __init__(self, step_seconds: float = 0.08) -> None:
-        self.step_seconds = step_seconds
+        import os
+
+        # Native QA can slow the stand-in down enough to observe between-step timing.
+        self.step_seconds = float(os.environ.get("REFRACT_MOCK_STEP_SECONDS", step_seconds))
 
     def build_model(self, model_path=None, quantize=None, source_id=None, family="qwen21"):
         return object(), quantize
@@ -74,13 +77,12 @@ class MockRunner:
                 "peak_memory_gb": round(0.4 + step * 0.01, 2),
             }
             if request.preview_interval and job_dir and (
-                step % max(1, request.preview_interval) == 0 or step == total
+                step % max(1, request.preview_interval) == 0 or step in (1, total)
             ):
                 path = job_dir / f"preview_{step:03d}.png"
                 self._render(request, step / max(1, total), (512, 512)).save(path)
-                for stale in job_dir.glob("preview_*.png"):
-                    if stale != path:
-                        stale.unlink(missing_ok=True)
+                for stale in sorted(job_dir.glob("preview_*.png"))[:-3]:
+                    stale.unlink(missing_ok=True)
                 event["preview_path"] = str(path)
             reporter(event)
 

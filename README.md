@@ -59,32 +59,45 @@ The model weights are downloaded from their upstream publishers and keep their o
 
 ## How it works
 
-The native Swift and AppKit shell owns the window and local service. A React interface runs in `WKWebView`, while a Python service runs inference through MLX and mflux. The service listens on loopback on the same Mac.
+The entire desktop interface is native SwiftUI and AppKit: Compose, Library, Projects, Avatars, Models, and Settings. There is no web view or UI server in the desktop app. A single owned Python service runs inference through MLX and mflux over authenticated loopback on the same Mac.
+
+Machine status stays pinned beneath the sidebar's scrolling navigation. Elapsed time and the estimated remaining denoising time tick between model steps; previews update after each completed step by default. Preview decoding adds work and can be reduced or disabled in generation settings. Closing the last window or quitting stops the backend and its worker process group; a parent watchdog also cleans up if the app crashes.
 
 The repository keeps the product pieces separate:
 
 | Directory | Contents |
 | --- | --- |
-| `app/` | React, TypeScript, and Vite interface |
+| `app/` | Legacy React/TypeScript browser interface, retained for optional web development |
 | `backend/` | Python service, model setup, storage, and backend source tests |
-| `native/` | Swift and AppKit macOS shell and app icon |
+| `native/` | Native SwiftUI/AppKit interface, service lifecycle, and app icon |
 | `scripts/` | Local setup, development, app-bundle, and DMG build scripts |
 | `docs/` | Interface design notes |
 
 ## Build from source
 
-Builds require macOS, Apple silicon, Xcode Command Line Tools, Node.js, and `uv`.
+Native builds require macOS, Apple silicon, Xcode Command Line Tools, and `uv`. Node.js is needed only for the optional legacy browser interface.
 
 ```bash
-brew install uv node
+brew install uv
 ./scripts/bootstrap.sh
 ./scripts/make-swift-app.sh
-./scripts/make-dmg.sh 0.0.2
+./scripts/make-dmg.sh 0.0.3
 ```
 
-The app bundle embeds the built interface and the first-run setup payload. Python runtime dependencies and model weights are installed separately when the app is first opened. Source setup resolves the latest releases allowed by the dependency ranges; new major versions require an intentional range change and compatibility review. The checked-in npm lockfile remains unchanged and supports reproducible builds with `npm ci`.
+The SwiftUI interface is compiled directly into the executable. The bundle embeds only the backend and first-run setup payload; Python runtime dependencies and model weights are installed separately. Native builds do not build or bundle React assets.
 
-For UI development, run `./scripts/dev.sh` for the native window with Vite hot reload, or `./scripts/dev.sh --web` to work in a browser. To install the backend's development-only test tools, run `uv pip install --python .runtime/bin/python -e 'backend[dev]'`. Backend tests live under `backend/tests/`; the UI has a type-check script at `app/package.json`.
+Run `./scripts/dev.sh` to rebuild and launch the native app, or add `--mock` for placeholder inference. The optional legacy web interface remains available with `cd app && npm ci` followed by `./scripts/dev.sh --web`.
+
+To install backend test tools, run `uv pip install --python .runtime/bin/python -e 'backend[dev]'`. Run `.runtime/bin/python -m pytest backend/tests` for backend coverage. For native end-to-end checks without touching your normal data or preferences:
+
+```bash
+./scripts/make-swift-app.sh --out native/build --name 'Refract Native'
+REFRACT_ROOT="$PWD/.runtime/native-qa" REFRACT_MOCK_STEP_SECONDS=2 \
+  'native/build/Refract Native.app/Contents/MacOS/RefractImage' --mock --smoke
+.runtime/bin/python scripts/test-native-lifecycle.py
+```
+
+Native smoke checks exercise actual SwiftUI navigation controls, streamed preview files, live timing, saved project sessions, queue cancellation, image clipboard actions, and the pinned status panel at minimum window size. Lifecycle checks verify that closing a busy window and unexpectedly terminating the app both stop the owned backend.
 
 ## FAQ
 

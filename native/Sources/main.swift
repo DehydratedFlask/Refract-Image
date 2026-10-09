@@ -3,12 +3,13 @@ import AppKit
 /// Command-line switches, so the same binary is usable from a terminal.
 ///
 /// A double-clicked app gets these from its bundle; a terminal run needs `--mock` to exercise the
-/// UI without loading 11 GB of weights, and `--smoke` to prove the window, the bridge and the
-/// service all talk to each other without anyone clicking anything.
+/// UI without loading weights, and `--smoke` to exercise the native window, controls,
+/// streaming service and persisted generation sessions.
 enum Launch {
     private(set) static var mock = false
     private(set) static var verbose = false
     private(set) static var smoke = false
+    private(set) static var lifecycleClose = false
 
     /// Load the page from a development server instead of the built bundle in `app/dist`.
     ///
@@ -27,6 +28,8 @@ enum Launch {
                 mock = true
             case "--verbose", "-v":
                 verbose = true
+            case "--lifecycle-close":
+                lifecycleClose = true
             case "--smoke":
                 smoke = true
                 verbose = true
@@ -48,9 +51,8 @@ enum Launch {
         Refract Image — local reference-guided image editing on Apple silicon
 
           --mock          run the placeholder runner instead of loading the model
-          --verbose       forward the page's console to stderr, and allow the web inspector
-          --smoke         start everything, check window + bridge + service, then exit
-          --dev-url URL   show a development server's page instead of the built UI
+          --verbose       report native application diagnostics
+          --smoke         check native views, service, and mock generation, then exit
         """
     }
 }
@@ -61,7 +63,7 @@ enum Launch {
 /// memory is how a machine gets restarted. Re-opening the app therefore wakes the copy that is
 /// already running, which is also what people expect of a Dock icon.
 func alreadyRunningCopy() -> NSRunningApplication? {
-    guard let identifier = Bundle.main.bundleIdentifier, !Launch.smoke else { return nil }
+    guard let identifier = Bundle.main.bundleIdentifier, !Launch.smoke, !Launch.lifecycleClose else { return nil }
     let mine = ProcessInfo.processInfo.processIdentifier
     return NSRunningApplication.runningApplications(withBundleIdentifier: identifier)
         .first { $0.processIdentifier != mine }
@@ -88,6 +90,6 @@ if CommandLine.arguments.contains("--help") || CommandLine.arguments.contains("-
     exit(0)
 }
 
-let delegate = AppDelegate()
+let delegate = MainActor.assumeIsolated { AppDelegate() }
 application.delegate = delegate
 application.run()

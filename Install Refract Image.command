@@ -23,8 +23,8 @@ status=$?
 echo
 if [[ $status -eq 0 ]]; then
   echo "Setup finished. You can close this window."
-  echo "To start the app, double-click Refract Image.app in this folder,"
-  echo "or run it from here: open \"Refract Image.app\""
+  echo "To start the app, open Refract Image.app in the sibling application folder,"
+  echo "or run it from here: open \"../application/Refract Image.app\""
 else
   echo "Setup failed (exit $status). The messages above explain why — fix that and run this file again."
 fi

@@ -123,7 +123,7 @@ export function GenerateBar() {
         {source && !source.available ? <span className="pill warn">needs download</span> : null}
         {system && system.total_ram_gb > 0 && params.width && params.height ? (
           <span className="faint">
-            · {estimate(params.width, params.height, params.low_ram, params.model_source)}
+            · {estimate(params.width, params.height, params.model_source)}
           </span>
         ) : null}
       </div>
@@ -169,13 +169,12 @@ export function GenerateBar() {
  * than as an out-of-memory failure halfway through. It is anchored on a measured run:
  * 512px, quantised transformer and text encoder, ~15.6 GB peak. The per-megapixel term
  * covers activations, which grow with the latent. Treat the result as a floor — the
- * upstream source keeps a bf16 text encoder resident (~17.5 GB) unless low-memory mode
- * evicts it after each encode.
+ * upstream source keeps a bf16 text encoder resident (~17.5 GB).
  */
-function estimate(width: number, height: number, lowRam: boolean, sourceId: string): string {
+function estimate(width: number, height: number, sourceId: string): string {
   const megapixels = (width * height) / (1024 * 1024);
   const quantizedEncoder = sourceId === "mlx-q4";
-  const base = quantizedEncoder ? 14.5 : lowRam ? 15.0 : 24.0;
+  const base = quantizedEncoder ? 14.5 : 24.0;
   const total = base + megapixels * 4.5;
   return `≈${total.toFixed(0)} GB peak RAM`;
 }

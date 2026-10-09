@@ -17,7 +17,6 @@ export function AdvancedPanel() {
   const sources = useStore((state) => state.sources);
   const encoders = useStore((state) => state.encoders);
   const activeEncoders = useStore((state) => state.activeEncoders);
-  const system = useStore((state) => state.system);
   // FLUX.2 carries its own text encoder (a text-only Qwen3-4B), so the encoder list shown
   // here follows the family of the selected source rather than listing both.
   const isFlux2 = params.model_source === "flux2-klein-4b";
@@ -25,11 +24,6 @@ export function AdvancedPanel() {
     ? encoders.filter((e) => e.family === "flux2")
     : encoders.filter((e) => e.family === "qwen21");
   const activeEncoder = familyEncoders.find((e) => e.key === activeEncoders[isFlux2 ? "flux2" : "qwen21"]);
-
-  const lowRamHint =
-    system && system.total_ram_gb > 0 && system.total_ram_gb < 32
-      ? "Recommended on this machine (under 32 GB of memory)"
-      : "Evicts the text encoder after encoding and reloads it per run";
 
   return (
     <div className="col" style={{ gap: 16 }}>
@@ -215,10 +209,6 @@ export function AdvancedPanel() {
 
       <Row label="Reuse text/reference prefix" hint="KV cache — faster, off only for A/B comparison">
         <Switch on={params.use_kv_cache} onChange={(next) => setParams({ use_kv_cache: next })} label="KV cache" />
-      </Row>
-
-      <Row label="Low memory mode" hint={lowRamHint}>
-        <Switch on={params.low_ram} onChange={(next) => useStore.getState().updateSettings({ lowRam: next })} label="Low memory" />
       </Row>
 
       <Row label="Tile the VAE decode" hint="Lower peak memory at large sizes, marginally slower">

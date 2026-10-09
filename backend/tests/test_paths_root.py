@@ -116,5 +116,33 @@ def test_storage_report_names_the_volume(monkeypatch, tmp_path):
     assert report["models_dir"].endswith("models")
 
 
+def test_source_only_copy_uses_separate_application_workspace(monkeypatch, tmp_path):
+    source = tmp_path / "project"
+    source.mkdir()
+    (source / ".refract-workspace").write_text("../application\n")
+    monkeypatch.setattr(paths, "repo_root", lambda: source)
+    for key in ("REFRACT_WORKSPACE", "REFRACT_ROOT", "REFRACT_DATA_DIR"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(paths, "is_on_internal_disk", lambda _path: False)
+    assert paths.workspace_root() == tmp_path / "application"
+    assert paths.data_root() == tmp_path / "application" / ".refract"
+
+
+def test_application_workspace_override_preserves_explicit_data_root(monkeypatch, tmp_path):
+    monkeypatch.setenv("REFRACT_WORKSPACE", str(tmp_path / "application"))
+    monkeypatch.setenv("REFRACT_ROOT", str(tmp_path / "chosen-model-storage"))
+    assert paths.workspace_root() == tmp_path / "application"
+    assert paths.data_root() == tmp_path / "chosen-model-storage"
+
+
+def test_empty_workspace_marker_is_rejected(monkeypatch, tmp_path):
+    (tmp_path / ".refract-workspace").write_text("\n")
+    monkeypatch.delenv("REFRACT_WORKSPACE", raising=False)
+    monkeypatch.setattr(paths, "repo_root", lambda: tmp_path)
+    import pytest
+    with pytest.raises(ValueError, match="must name"):
+        paths.workspace_root()
+
+
 def _raise_oserror(*_args, **_kwargs):
     raise OSError("unreadable")

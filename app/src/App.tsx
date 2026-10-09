@@ -7,6 +7,7 @@ import { CheatSheet, OnboardingSheet, SettingsSheet } from "./components/Sheets"
 import { Button, EmptyState, ToastHost } from "./components/ui";
 import { ComposeView } from "./features/compose/ComposeView";
 import { LibraryView } from "./features/library/LibraryView";
+import { AvatarsView } from "./features/library/AvatarsView";
 import { ModelsView } from "./features/models/ModelsView";
 import { ProjectsView } from "./features/projects/ProjectsView";
 import { installWindowDragRegion, onFileDrop, onMenuCommand, revealInFinder, saveImageAs } from "./lib/ipc";
@@ -47,13 +48,13 @@ export default function App() {
     void useStore.getState().init();
   }, []);
 
-  // Every model change (including restored project sessions) evicts the previous weights.
+  // Selection changes keep the warm model; the next generation swaps it if needed.
   useEffect(() => {
     if (!ready) return;
     modelSelectionRequest = modelSelectionRequest.catch(() => undefined)
       .then(() => api.selectModel(modelSource, modelPath));
     void modelSelectionRequest.catch((error: Error) => {
-      useStore.getState().toast(`Could not unload the previous model: ${error.message}`, "error");
+      useStore.getState().toast(`Could not update model selection: ${error.message}`, "error");
     });
   }, [ready, modelSource, modelPath]);
 
@@ -242,6 +243,7 @@ export default function App() {
         <main className="content">
           {view === "compose" ? <ComposeView dragActive={dragActive} /> : null}
           {view === "library" ? <LibraryView /> : null}
+          {view === "avatars" ? <AvatarsView /> : null}
           {view === "projects" ? <ProjectsView dragActive={dragActive} /> : null}
           {view === "models" ? <ModelsView /> : null}
         </main>

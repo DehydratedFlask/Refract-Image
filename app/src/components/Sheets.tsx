@@ -132,12 +132,7 @@ export function SettingsSheet() {
 
         <section className="col" style={{ gap: 12 }}>
           <div className="field-label">Memory</div>
-          <Row
-            label="Prefer low memory mode"
-            hint="Evicts the text encoder after encoding and reloads the model per run"
-          >
-            <Switch on={settings.lowRam} onChange={(next) => update({ lowRam: next })} label="Low memory" />
-          </Row>
+          <div className="caption muted">The model stays loaded across sessions until you generate with another model or close the app.</div>
           <Row label="Tile the VAE decode" hint="Lower peak memory at large output sizes">
             <Switch on={settings.vaeTiling} onChange={(next) => update({ vaeTiling: next })} label="VAE tiling" />
           </Row>

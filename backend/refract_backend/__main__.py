@@ -36,6 +36,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
+    # The native app owns a separate process group for inference and any download
+    # workers it spawns. Start the parent watchdog before expensive runtime imports.
+    if os.environ.get("REFRACT_PARENT_PID"):
+        if os.getpgrp() != os.getpid():
+            os.setsid()
+        threading.Thread(target=_watch_parent, args=(int(os.environ["REFRACT_PARENT_PID"]),), daemon=True).start()
+
     # First thing in the process: export where caches live (see paths.configure_environment)
     # while it is still early enough to affect huggingface_hub's own constants.
     from .paths import configure_environment, data_root, ensure_dirs
@@ -74,10 +81,6 @@ def main(argv: list[str] | None = None) -> int:
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, shutdown)
 
-    # Watchdog: if the parent app dies, this process must not linger holding 20 GB.
-    if os.environ.get("REFRACT_PARENT_PID"):
-        threading.Thread(target=_watch_parent, args=(int(os.environ["REFRACT_PARENT_PID"]), state), daemon=True).start()
-
     import uvicorn
 
     config = uvicorn.Config(app, log_level=args.log_level, access_log=False, lifespan="on")
@@ -96,14 +99,15 @@ def _safe_version() -> str | None:
     return None if version == "not installed" else version
 
 
-def _watch_parent(parent_pid: int, state) -> None:
-    """Exit when the app that spawned this service disappears."""
+def _watch_parent(parent_pid: int) -> None:
+    """Kill the owned inference/download group even if GPU cancellation is stuck."""
     while True:
-        time.sleep(2.0)
+        time.sleep(1.0)
         try:
             os.kill(parent_pid, 0)
-        except OSError:
-            state.queue.shutdown(timeout=2)
+        except ProcessLookupError:
+            if os.getpgrp() == os.getpid():
+                os.killpg(os.getpid(), signal.SIGKILL)
             os._exit(0)
 
 

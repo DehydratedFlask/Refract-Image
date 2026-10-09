@@ -24,6 +24,15 @@ enum HostPaths {
         }
         var directory = containingDirectory
         for _ in 0..<12 {
+            // A checkout is marked by `.refract-workspace` beside the scripts it runs.
+            if fileExists(directory.appendingPathComponent(".refract-workspace")),
+               fileExists(directory.appendingPathComponent("scripts/bootstrap.sh")) { return directory }
+            // A bundle built beside the checkout sits inside the application directory, so the
+            // checkout is that directory's sibling.
+            let sibling = directory.deletingLastPathComponent()
+            if directory.lastPathComponent == "application",
+               fileExists(sibling.appendingPathComponent(".refract-workspace")),
+               fileExists(sibling.appendingPathComponent("scripts/bootstrap.sh")) { return sibling }
             if FileManager.default.isExecutableFile(atPath: directory.appendingPathComponent(".runtime/bin/python").path)
                 || fileExists(directory.appendingPathComponent("scripts/bootstrap.sh")) {
                 return directory
@@ -33,6 +42,19 @@ enum HostPaths {
             directory = parent
         }
         return nil
+    }
+
+    /// The application workspace can remain outside a source-only checkout.
+    static func workspaceRoot() -> URL? {
+        if let explicit = environmentValue("REFRACT_WORKSPACE") {
+            return URL(fileURLWithPath: explicit, isDirectory: true)
+        }
+        guard let source = repoRoot() else { return nil }
+        let marker = source.appendingPathComponent(".refract-workspace")
+        if let relative = try? String(contentsOf: marker, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines), !relative.isEmpty {
+            return source.appendingPathComponent(relative, isDirectory: true).standardizedFileURL
+        }
+        return source
     }
 
     /// The built React bundle the window renders, if there is one.
@@ -70,10 +92,11 @@ enum HostPaths {
     /// extracted, then the checkout beside the bundle.
     private static func programRoots() -> [URL] {
         var roots: [URL] = []
+        // A source checkout must use its edited backend, not an older installed payload.
+        if let repo = repoRoot() { roots.append(repo) }
         if let program = Install.load()?.programRoot {
             roots.append(URL(fileURLWithPath: program, isDirectory: true))
         }
-        if let repo = repoRoot() { roots.append(repo) }
         return roots
     }
 
@@ -93,7 +116,7 @@ enum HostPaths {
         if let chosen = Install.load()?.dataRoot {
             return URL(fileURLWithPath: chosen, isDirectory: true)
         }
-        if let root = repoRoot(), !isOnInternalDisk(root) {
+        if let root = workspaceRoot(), !isOnInternalDisk(root) {
             return root.appendingPathComponent(".refract", isDirectory: true)
         }
         return homeDirectory
@@ -104,7 +127,8 @@ enum HostPaths {
     /// Where the children's logs go: the runtime directory when there is one, so a
     /// terminal-launched run and a double-clicked run write the same files.
     static func logsDirectory() -> URL {
-        if let root = repoRoot() {
+        if let explicit = environmentValue("REFRACT_LOG_DIR") { return URL(fileURLWithPath: explicit, isDirectory: true) }
+        if let root = workspaceRoot() {
             let runtime = root.appendingPathComponent(".runtime", isDirectory: true)
             if isDirectory(runtime) { return runtime }
         }
@@ -136,7 +160,7 @@ enum HostPaths {
         // looked for in the data root first, then beside the checkout, then in the legacy
         // Application Support location, so a runtime installed by an older build keeps working.
         var manifests = [dataRoot().appendingPathComponent("runtime.json").path]
-        if let root = repoRoot() {
+        if let root = workspaceRoot() {
             manifests.append(root.appendingPathComponent(".runtime/runtime.json").path)
         }
         manifests.append(
@@ -154,7 +178,7 @@ enum HostPaths {
             candidates.append(URL(fileURLWithPath: runtime, isDirectory: true).appendingPathComponent("bin/python").path)
         }
 
-        if let root = repoRoot() {
+        if let root = workspaceRoot() {
             candidates.append(root.appendingPathComponent(".runtime/bin/python").path)
         }
         // Last resort: climb from the executable, which still finds a runtime when the bundle

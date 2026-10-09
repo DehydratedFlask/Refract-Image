@@ -15,7 +15,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RUNTIME="$ROOT/.runtime"
+source "$ROOT/scripts/_env.sh"
+RUNTIME="$WORKSPACE/.runtime"
 PY="$RUNTIME/bin/python"
 
 # ~14 GB of downloads plus the staged checkpoint. Downloads mostly become hard links into
@@ -91,8 +92,7 @@ ensure_tool() {
 
 say "Checking prerequisites"
 ensure_tool uv uv "Install it with: brew install uv  — or see https://docs.astral.sh/uv/"
-ensure_tool node node "Install it with: brew install node"
-note "uv $(uv --version 2>/dev/null | awk '{print $2}') · node $(node --version)"
+note "uv $(uv --version 2>/dev/null | awk '{print $2}') · native SwiftUI (Node.js not required)"
 # No Rust: the app shell is Swift compiled by swiftc, and `make-swift-app.sh` checks for the
 # Command Line Tools itself, so a machine without them still gets the runtime and the model.
 if [[ "$BUILD_NATIVE" == 1 ]] && ! xcrun --sdk macosx --show-sdk-path >/dev/null 2>&1; then
@@ -123,7 +123,6 @@ check_space "Repository volume" "$ROOT"
 # ends with: mflux's reference-editing pipeline is why the revision is pinned at all.
 runtime_ready() {
   [[ -x "$PY" ]] || return 1
-  [[ -d "$ROOT/app/node_modules" ]] || return 1
   "$PY" - <<'PY' >/dev/null 2>&1
 import fastapi, uvicorn, huggingface_hub, safetensors, multipart, refract_backend  # noqa: F401
 from PIL import Image  # noqa: F401
@@ -198,13 +197,13 @@ Setup complete.
   Model        $STAGED
 
 Run Refract Image:
-  open "Refract Image.app"   the native app, once built (--native)
-  ./scripts/dev.sh            the native app against vite, for UI work
+  open "$WORKSPACE/Refract Image.app"   the native app, once built (--native)
+  ./scripts/dev.sh            rebuild and launch the native app
   ./scripts/dev.sh --web      the UI in a browser, for development
   ./scripts/try-reference.py  one real reference edit from the terminal
 
 Make a double-clickable app:
-  ./scripts/make-swift-app.sh    builds ./Refract Image.app (a real macOS window)
+  ./scripts/make-swift-app.sh    builds the app in $WORKSPACE (a real macOS window)
 
 The app already defaults to the Uncensored 4-bit model, so there is nothing to select before
 the first generation.

@@ -20,11 +20,26 @@
 # without editing this file.
 
 : "${ROOT:?source scripts/_env.sh after setting ROOT to the checkout path}"
-PY="${PY:-$ROOT/.runtime/bin/python}"
+
+# Source and application files need not share a directory. The source-only copy
+# records its workspace relative to itself; standalone payloads have no marker.
+WORKSPACE="$ROOT"
+if [[ -f "$ROOT/.refract-workspace" ]]; then
+  workspace_relative="$(cat "$ROOT/.refract-workspace")"
+  WORKSPACE="$(cd "$ROOT/$workspace_relative" && pwd)"
+fi
+export REFRACT_WORKSPACE="${REFRACT_WORKSPACE:-$WORKSPACE}"
+WORKSPACE="$REFRACT_WORKSPACE"
+if [[ -z "${PY:-}" || "$PY" == "$ROOT/.runtime/bin/python" ]]; then
+  PY="${REFRACT_PYTHON:-$WORKSPACE/.runtime/bin/python}"
+fi
 
 export REFRACT_REPO_ROOT="${REFRACT_REPO_ROOT:-$ROOT}"
-export UV_CACHE_DIR="${UV_CACHE_DIR:-$ROOT/.cache/uv}"
-export npm_config_cache="${npm_config_cache:-$ROOT/.cache/npm}"
+# Prefer this source copy over the shared runtime's original editable install.
+export PYTHONPATH="$ROOT/backend${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONDONTWRITEBYTECODE=1
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$WORKSPACE/.cache/uv}"
+export npm_config_cache="${npm_config_cache:-$WORKSPACE/.cache/npm}"
 
 if [[ -x "$PY" ]]; then
   # Two lines, read positionally: paths may contain spaces (this checkout does).

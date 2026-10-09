@@ -12,7 +12,7 @@ export default defineConfig({
     strictPort: true,
   },
   build: {
-    outDir: "dist",
+    outDir: "../../application/web/dist",
     emptyOutDir: true,
     target: "safari16",
     sourcemap: false,

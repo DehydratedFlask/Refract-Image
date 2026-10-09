@@ -36,6 +36,7 @@ final class SetupWindow: NSObject, NSWindowDelegate {
     private var runtimeRoot: URL
     private var choices: [ModelChoice] = []
     private var running = false
+    private var installer: Process?
 
     private struct ModelChoice {
         let id: String
@@ -57,14 +58,14 @@ final class SetupWindow: NSObject, NSWindowDelegate {
     /// the user is told as much. A machine with a large external drive is exactly the case this
     /// exists for, and the internal disk is rarely the right answer for either.
     private static var defaultDataRoot: URL {
-        if let repo = HostPaths.repoRoot(), !HostPaths.isOnInternalDisk(repo) {
+        if let repo = HostPaths.workspaceRoot(), !HostPaths.isOnInternalDisk(repo) {
             return repo.appendingPathComponent(".refract", isDirectory: true)
         }
         return Install.preferencesDirectory
     }
 
     private static var defaultRuntimeRoot: URL {
-        if let repo = HostPaths.repoRoot() {
+        if let repo = HostPaths.workspaceRoot() {
             return repo.appendingPathComponent(".runtime", isDirectory: true)
         }
         return Install.preferencesDirectory.appendingPathComponent("runtime", isDirectory: true)
@@ -114,7 +115,27 @@ func reopen() {
         // Quitting halfway is allowed and correct: nothing is recorded, so the next launch
         // simply asks again. Blocking the close button here would trap a user who opened the
         // app by mistake on a machine that is already set up elsewhere.
-        !running
+        stop()
+        return true
+    }
+
+    /// The first-run installer is also owned by the application, not left running on quit.
+    func stop() {
+        guard let installer else { return }
+        installer.terminationHandler = nil
+        let pid = installer.processIdentifier
+        guard pid > 0 else { return }
+        let group = getpgid(pid) == pid
+        if installer.isRunning || group {
+            kill(group ? -pid : pid, SIGTERM)
+            for _ in 0..<20 {
+                if !installer.isRunning { break }
+                usleep(50_000)
+            }
+            if group || installer.isRunning { kill(group ? -pid : pid, SIGKILL) }
+        }
+        self.installer = nil
+        running = false
     }
 
     // MARK: - layout
@@ -374,8 +395,11 @@ func reopen() {
     private func runBootstrap(_ script: URL, programRoot: URL) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        // A job-control subshell owns a group containing bootstrap and its uv/git workers.
+        // No paths are interpolated into shell source; they travel as positional arguments.
         process.arguments = [
-            script.path,
+            "-c", "set -m; /bin/bash \"$@\" & child=$!; trap 'kill -TERM -- -$child 2>/dev/null || true; sleep 0.2; kill -KILL -- -$child 2>/dev/null || true' EXIT; wait \"$child\"",
+            "refract-setup", script.path,
             "--runtime", runtimeRoot.path,
             "--data-root", dataRoot.path,
             "--program", programRoot.path,
@@ -404,6 +428,8 @@ func reopen() {
         process.terminationHandler = { [weak self] finished in
             DispatchQueue.main.async {
                 guard let self else { return }
+                self.installer = nil
+                self.running = false
                 self.progress.stopAnimation(nil)
                 if finished.terminationStatus == 0 {
                     let record = Install.Record(
@@ -426,6 +452,7 @@ func reopen() {
 
         do {
             try process.run()
+            installer = process
         } catch {
             fail("Could not start the installer: \(error.localizedDescription)")
         }

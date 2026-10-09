@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Build the native macOS app — a Swift/AppKit shell that owns the model service and renders the
-# built UI in a window, instead of handing a URL to your browser.
+# Build the native SwiftUI/AppKit macOS app and its local inference-service payload.
 #
 #   ./scripts/make-swift-app.sh                 build ./Refract Image.app
 #   ./scripts/make-swift-app.sh --out ~/Apps    write the bundle into another directory
@@ -14,12 +13,13 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/_env.sh"
 
-OUT_DIR="$ROOT"
+OUT_DIR="$WORKSPACE"
 NAME="Refract Image"
 APP_NAME="Refract Image"
 EXECUTABLE_NAME="RefractImage"
-VERSION="${REFRACT_APP_VERSION:-0.0.2}"
+VERSION="${REFRACT_APP_VERSION:-0.0.3}"
 SKIP_BUILD=0
 RUN_SMOKE=0
 MOCK=0
@@ -42,8 +42,14 @@ done
 say() { printf "\033[1;34m==>\033[0m %s\n" "$1"; }
 warn() { printf "\033[1;33m!\033[0m %s\n" "$1" >&2; }
 
+mkdir -p "$OUT_DIR"
+OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 BUNDLE="$OUT_DIR/$NAME.app"
-SWIFT_SOURCES=("$ROOT"/native/Sources/*.swift)
+SWIFT_SOURCES=()
+for source in "$ROOT"/native/Sources/*.swift; do
+  case "$(basename "$source")" in Browser.swift|Bridge.swift) continue ;; esac
+  SWIFT_SOURCES+=("$source")
+done
 
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "REFRACT_APP_VERSION must use major.minor.patch format." >&2
@@ -61,28 +67,14 @@ if ! xcrun --sdk macosx --show-sdk-path >/dev/null 2>&1; then
 fi
 SDK="$(xcrun --sdk macosx --show-sdk-path)"
 
-if [[ ! -x "$ROOT/.runtime/bin/python" ]]; then
+if [[ ! -x "$PY" ]]; then
   warn "no runtime at .runtime/bin/python — the app will ask you to install it on first launch."
 fi
 
-# ------------------------------------------------------------------ the UI bundle
-if (( ! SKIP_BUILD )); then
-  if command -v npm >/dev/null 2>&1; then
-    say "Building the UI"
-    ( cd "$ROOT/app" && npm run build )
-  else
-    warn "npm not found; the app can only start if app/dist already exists."
-  fi
-fi
-
-if [[ ! -f "$ROOT/app/dist/index.html" ]]; then
-  echo "There is no built UI at app/dist/index.html, and the app has nothing to show without it." >&2
-  echo "Run 'npm run build' in app/ (or drop --skip-build and let this script do it)." >&2
-  exit 1
-fi
+# SwiftUI is compiled into the executable; npm and app/dist are not required.
 
 # ------------------------------------------------------------------ compile
-BUILD_DIR="$ROOT/native/build"
+BUILD_DIR="${REFRACT_BUILD_DIR:-$WORKSPACE/native-build}"
 BIN="$BUILD_DIR/$EXECUTABLE_NAME"
 mkdir -p "$BUILD_DIR"
 
@@ -102,7 +94,11 @@ fi
 
 # ------------------------------------------------------------------ bundle
 say "Assembling $BUNDLE"
-rm -rf "$BUNDLE"
+if [[ -d "$BUNDLE" ]]; then
+  backup="$BUILD_DIR/replaced-bundles/$(date +%Y%m%d-%H%M%S)-$$-$NAME.app"
+  mkdir -p "$(dirname "$backup")"
+  mv "$BUNDLE" "$backup"
+fi
 mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 cp "$BIN" "$BUNDLE/Contents/MacOS/$EXECUTABLE_NAME"
 printf 'APPL????' > "$BUNDLE/Contents/PkgInfo"
@@ -145,18 +141,16 @@ PAYLOAD_STAGE="$(mktemp -d)"
 trap 'rm -rf "$PAYLOAD_STAGE"' EXIT
 
 say "Staging the app payload"
-mkdir -p "$PAYLOAD_STAGE/backend" "$PAYLOAD_STAGE/app" "$PAYLOAD_STAGE/scripts"
+mkdir -p "$PAYLOAD_STAGE/backend" "$PAYLOAD_STAGE/scripts"
 cp -R "$ROOT/backend/refract_backend" "$PAYLOAD_STAGE/backend/"
-cp -R "$ROOT/app/dist" "$PAYLOAD_STAGE/app/dist"
-cp "$ROOT/scripts/serve_app.py" "$PAYLOAD_STAGE/scripts/"
 cp "$ROOT/scripts/bootstrap.sh" "$PAYLOAD_STAGE/scripts/"
 cp "$ROOT/scripts/_env.sh" "$PAYLOAD_STAGE/scripts/"
 
 # The first-run window offers a model choice before the runtime exists, so it cannot ask a
 # running service what is available. This is that list, generated from the same registry the
 # running app uses so the two cannot drift.
-if [[ -x "$ROOT/.runtime/bin/python" ]]; then
-  "$ROOT/.runtime/bin/python" -m refract_backend.tools.export_setup "$PAYLOAD_STAGE/setup.json" >/dev/null \
+if [[ -x "$PY" ]]; then
+  "$PY" -m refract_backend.tools.export_setup "$PAYLOAD_STAGE/setup.json" >/dev/null \
     || warn "could not generate setup.json; the setup window will not be able to list models."
 else
   warn "no .runtime for export_setup; run scripts/bootstrap.sh to generate setup.json."

@@ -53,15 +53,18 @@ export interface GenerateParams {
   output_name?: string | null;
 }
 
+export type AvatarReferenceRole = "face" | "body" | "reference";
+
 export interface Avatar {
   id: string;
   name: string;
   handle: string;
   description: string;
   references: string[];
+  reference_roles: AvatarReferenceRole[];
   updated_at: number;
 }
-export type AvatarDraft = Pick<Avatar, "name" | "handle" | "description" | "references">;
+export type AvatarDraft = Pick<Avatar, "name" | "handle" | "description" | "references" | "reference_roles">;
 
 export interface JobEvent {
   seq: number;

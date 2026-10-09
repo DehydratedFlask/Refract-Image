@@ -18,7 +18,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RUNTIME="$ROOT/.runtime"
+source "$ROOT/scripts/_env.sh"
+RUNTIME="$WORKSPACE/.runtime"
 PY="$RUNTIME/bin/python"
 PIN_FILE="$RUNTIME/mflux-commit.txt"
 REFRESH=0
@@ -47,9 +48,6 @@ say() { printf "\033[1;34m==>\033[0m %s\n" "$1"; }
 fail() { printf "\033[1;31mError:\033[0m %s\n" "$1" >&2; exit 1; }
 
 command -v uv >/dev/null || fail "uv is required (https://docs.astral.sh/uv/). Install it, then re-run."
-if [[ -f "$ROOT/app/package.json" ]]; then
-  command -v node >/dev/null || fail "Node.js is required to build the UI."
-fi
 # No Rust and no Xcode project: the app shell is compiled by swiftc from the Command Line Tools,
 # which scripts/make-swift-app.sh checks for itself.
 
@@ -87,14 +85,7 @@ fi
 # backend/pyproject.toml supplies the rest of the backend's declared requirements.
 uv pip install --upgrade --python "$PY" "${DEPS[@]}"
 
-say "Installing app dependencies"
-# A standalone install ships the built UI inside the payload and has no `app/` to build, so
-# Node is not a requirement there — only a checkout needs it.
-if [[ -f "$ROOT/app/package.json" ]]; then
-  (cd "$ROOT/app" && npm update --package-lock=false --no-audit --no-fund)
-else
-  say "  (no checkout to build; the UI comes from the app payload)"
-fi
+say "The native SwiftUI interface needs no Node.js dependencies"
 
 # The backend is importable now, so this resolves the real data root: `.refract` beside the
 # checkout when it is on an external volume, ~/Library/Application Support/Refract
@@ -137,18 +128,18 @@ Storage (models, downloads, jobs, images):
   $DATA_DIR
 
 Caches (uv wheels, npm tarballs, model downloads):
-  $ROOT/.cache and $HF_HOME
+  $WORKSPACE/.cache and $HF_HOME
 
 Runtime (Python, mflux, MLX):
   $RUNTIME
 
 Next:
   ./scripts/make-swift-app.sh          # build ./Refract Image.app
-  ./scripts/dev.sh                     # run the app against vite (hot reload)
+  ./scripts/dev.sh                     # rebuild and run the native SwiftUI app
   ./scripts/dev.sh --web               # run the UI in a browser, for development
   ./scripts/prepare-model.sh           # optional: write a local model copy up front
 
 The first generation downloads the 4-bit model pack (~8.9 GB) unless you prepare it now.
-Source builds resolve the latest versions allowed by app/package.json; the committed npm
-lockfile remains unchanged for reproducible builds that use npm ci.
+The native app is compiled with Apple's Swift toolchain. The optional legacy web interface
+in app/ can still be developed with npm ci and ./scripts/dev.sh --web.
 TXT

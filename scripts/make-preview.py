@@ -16,8 +16,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DIST = ROOT / "app" / "dist"
-OUT = ROOT / "assets" / "ui-preview.html"
+marker = ROOT / ".refract-workspace"
+WORKSPACE = (ROOT / marker.read_text().strip()).resolve() if marker.is_file() else ROOT
+DIST = WORKSPACE / "web" / "dist"
+OUT = WORKSPACE / "web" / "ui-preview.html"
 
 
 def inline(html: str) -> str:
